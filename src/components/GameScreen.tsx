@@ -3,13 +3,15 @@
 import React, { useRef, useEffect, useState } from "react";
 import RetroHUD from "./RetroHUD";
 import { synth } from "@/utils/audio";
-import { Play, Pause, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Shield, Lock, Wind } from "lucide-react";
 
 interface GameScreenProps {
   onGameOver: (finalScore: number, finalHeight: number, finalBlocks: number) => void;
   isPaused: boolean;
   onTogglePause: () => void;
 }
+
+type BlockType = "NORMAL" | "GOLD" | "GLASS";
 
 export default function GameScreen({
   onGameOver,
@@ -26,6 +28,7 @@ export default function GameScreen({
   const [blocksCount, setBlocksCount] = useState(0);
   const [maxCombo, setMaxCombo] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [activeWind, setActiveWind] = useState(0); // Wind state variable in React for general HUD awareness
 
   // High performance game variables kept in refs to bypass React state latency in physics loops
   const physicsRef = useRef({
@@ -56,12 +59,17 @@ export default function GameScreen({
       h: number;
       color: string;
       label: string;
+      type: BlockType;
     }>,
     towerSwayAmplitude: 0, // Maximum swing width multiplier
     swaySpeed: 0.022,       // Speed of wave oscillation
     cameraY: 0,             // Current scroll position
     targetCameraY: 0,       // Destination scroll position for smooth lerp
     swayFreezeCount: 0,     // Sway Freeze combo block count
+
+    // Crosswinds & Block Types parameters
+    wind: 0,                // Floating number from -1.5 to 1.5
+    currentBlockType: "NORMAL" as BlockType,
 
     // Interactive feedback overlays
     particles: [] as Array<{
@@ -128,6 +136,25 @@ export default function GameScreen({
     };
   }, [isPaused, onTogglePause, muted]);
 
+  // Generate a random block variant and crosswind environment
+  const spawnNewBlock = () => {
+    const p = physicsRef.current;
+    
+    // 1. Spawning Types logic (80% Normal, 10% Gold, 10% Glass)
+    const r = Math.random();
+    if (r < 0.8) {
+      p.currentBlockType = "NORMAL";
+    } else if (r < 0.9) {
+      p.currentBlockType = "GOLD";
+    } else {
+      p.currentBlockType = "GLASS";
+    }
+
+    // 2. Generate wind speed (-1.5 to 1.5)
+    p.wind = (Math.random() * 3) - 1.5;
+    setActiveWind(p.wind);
+  };
+
   // Compute organic snake-like sway shift for any stack level
   const getBlockSway = (index: number, time: number) => {
     const p = physicsRef.current;
@@ -136,11 +163,9 @@ export default function GameScreen({
     // IF SWAY IS FROZEN via combo, return 0 (sway is locked solid!)
     if (p.swayFreezeCount > 0) return 0;
     
-    // Multiplier increases as we ascend the skyscraper (base remains rigid)
     const ratio = (index + 1) / (p.blocks.length + 1);
     const maxSway = p.towerSwayAmplitude * ratio;
     
-    // Wave phase shift with index creates flexible fluid motion
     const wavePhase = time * p.swaySpeed - index * 0.22;
     return maxSway * Math.sin(wavePhase);
   };
@@ -156,6 +181,11 @@ export default function GameScreen({
     }
   };
 
+  // Initial block spawn on startup
+  useEffect(() => {
+    spawnNewBlock();
+  }, []);
+
   // Game Loop Animation & Resizing Edge Case Management
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -167,19 +197,15 @@ export default function GameScreen({
     let animId: number;
     const p = physicsRef.current;
 
-    // Handles dynamic device pixel ratio adjustments to eliminate blurriness on Retina displays
     const resizeVirtualScreen = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       
-      // physical buffer size
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
       
-      // Clear previous matrix scales
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       
-      // Map high-DPI coordinates onto rigid virtual 400 x 600 workspace coordinate grid
       const scaleX = (rect.width * dpr) / 400;
       const scaleY = (rect.height * dpr) / 600;
       ctx.scale(scaleX, scaleY);
@@ -210,10 +236,10 @@ export default function GameScreen({
       // 1. Crane swing calculation
       p.hookX = centerX + p.swingAmplitude * Math.sin(p.time * p.swingSpeed);
 
-      // Dampen sway over time (natural friction dampening)
+      // Dampen sway over time
       p.towerSwayAmplitude *= 0.996;
 
-      // 2. Camera vertical scroll tracking (smooth camera interpolation)
+      // 2. Camera vertical scroll tracking
       p.cameraY += (p.targetCameraY - p.cameraY) * 0.08;
 
       // 3. Update particle dynamics
@@ -235,6 +261,9 @@ export default function GameScreen({
       if (p.isFalling) {
         p.vy += p.gravity;
         p.blockY += p.vy;
+
+        // DRIFT PHYSICS: Apply uniform horizontal wind force every frame as it falls
+        p.blockX += p.wind;
 
         // Collision check boundaries
         const targetY = p.blocks.length === 0 
@@ -262,12 +291,21 @@ export default function GameScreen({
             p.vy = 0;
 
             const targetRestX = p.blocks.length === 0 ? w / 2 : p.blocks[p.blocks.length - 1].x;
+            
+            // Reconstruct resting restX subtracting the horizontal wind displacement offset
             const restX = targetRestX + dx;
             const restY = baseY - p.blocks.length * p.blockH - p.blockH / 2;
 
-            // Generate block color variations (retro green scaling)
-            const blockColors = ["#0e2b0e", "#133b13", "#1c4e1c", "#246424"];
-            const color = blockColors[p.blocks.length % blockColors.length];
+            // Generate block color variations based on block type
+            let color = "#0e2b0e";
+            if (p.currentBlockType === "GOLD") {
+              color = "#ffd700"; // Metallic golden yellow
+            } else if (p.currentBlockType === "GLASS") {
+              color = "rgba(51, 255, 255, 0.4)"; // Translucent cyan/green glass
+            } else {
+              const blockColors = ["#0e2b0e", "#133b13", "#1c4e1c", "#246424"];
+              color = blockColors[p.blocks.length % blockColors.length];
+            }
 
             p.blocks.push({
               x: restX,
@@ -275,24 +313,29 @@ export default function GameScreen({
               w: p.blockW,
               h: p.blockH,
               color,
-              label: `F${p.blocks.length + 1}`
+              label: p.currentBlockType === "GOLD" ? "GOLD" : p.currentBlockType === "GLASS" ? "GLAS" : `F${p.blocks.length + 1}`,
+              type: p.currentBlockType,
             });
 
-            // Alignment metrics feedback
+            // Alignment metrics perfect drop windows check
+            // GLASS block has a significantly tighter "Perfect Drop" window (under 2px instead of 4px)
+            const perfectThreshold = p.currentBlockType === "GLASS" ? 2.0 : 4.0;
             const offsetDist = Math.abs(dx);
             
-            // Decement sway freeze counter if sway locking was active
             if (p.swayFreezeCount > 0) {
               p.swayFreezeCount -= 1;
             }
 
-            if (offsetDist <= 4) {
-              // PERFECT DROP COMBO ACTIVE!
+            // Score modifier based on Gold block multiplier (2x score landed cleanly)
+            const goldMultiplier = p.currentBlockType === "GOLD" ? 2 : 1;
+
+            if (offsetDist <= perfectThreshold) {
+              // PERFECT DROP!
               p.swayFreezeCount = 2;
               
               const currentCombo = p.comboCount;
               setScore(prev => {
-                const nextScore = prev + 500 * currentCombo;
+                const nextScore = prev + (500 * currentCombo) * goldMultiplier;
                 p.scoreCount = nextScore;
                 return nextScore;
               });
@@ -307,22 +350,20 @@ export default function GameScreen({
                 return next;
               });
 
-              // Play short high-pitched beep synthesized sound for perfect hit
               synth.playPerfect(p.comboCount);
-
-              // Immediately silence wobbly sway energy
               p.towerSwayAmplitude = 0;
 
-              // Trigger Floating text banner
+              // Star explosion particle colors based on block type
+              const particleColor = p.currentBlockType === "GOLD" ? "#ffd700" : p.currentBlockType === "GLASS" ? "#33ffff" : "#33ff33";
+
               p.floatingTexts.push({
                 x: p.blockX,
                 y: p.blockY - 20,
-                text: `★ PERFECT x${currentCombo} ★`,
+                text: `${p.currentBlockType === "GOLD" ? "★ GOLD PERFECT ★" : p.currentBlockType === "GLASS" ? "✧ GLASS PERFECT ✧" : `★ PERFECT x${currentCombo} ★`}`,
                 alpha: 1.0,
-                color: "#33ff33",
+                color: particleColor,
               });
 
-              // Explode green glow stars particles
               for (let i = 0; i < 18; i++) {
                 p.particles.push({
                   x: p.blockX,
@@ -331,14 +372,14 @@ export default function GameScreen({
                   vy: -Math.random() * 3 - 1,
                   alpha: 1.0,
                   size: Math.random() * 3.5 + 1.5,
-                  color: "#33ff33",
+                  color: particleColor,
                 });
               }
             } else if (offsetDist <= 13) {
-              // GREAT DROP! Play low thud sound
+              // GREAT DROP!
               synth.playLand();
               setScore(prev => {
-                const nextScore = prev + 250;
+                const nextScore = prev + 250 * goldMultiplier;
                 p.scoreCount = nextScore;
                 return nextScore;
               });
@@ -347,21 +388,20 @@ export default function GameScreen({
               p.floatingTexts.push({
                 x: p.blockX,
                 y: p.blockY - 20,
-                text: "GREAT!",
+                text: p.currentBlockType === "GOLD" ? "GOLD GREAT!" : "GREAT!",
                 alpha: 1.0,
-                color: "#33ff33",
+                color: p.currentBlockType === "GOLD" ? "#ffd700" : "#33ff33",
               });
             } else {
-              // GOOD (Wobbly) Drop - Play low thud sound
+              // GOOD Drop
               synth.playLand();
               setScore(prev => {
-                const nextScore = prev + 100;
+                const nextScore = prev + 100 * goldMultiplier;
                 p.scoreCount = nextScore;
                 return nextScore;
               });
               setCombo(1);
 
-              // Accumulate tower offset sway energy (only if sway is not currently frozen!)
               if (p.swayFreezeCount === 0) {
                 p.towerSwayAmplitude = Math.min(75, p.towerSwayAmplitude + offsetDist * 0.55);
               }
@@ -375,21 +415,22 @@ export default function GameScreen({
               });
             }
 
-            // Push camera target upwards once we stacked over 2 levels
             if (p.blocks.length >= 2) {
               p.targetCameraY = (p.blocks.length - 1.5) * p.blockH;
             }
 
-            // Sync stats
             setBlocksCount(p.blocks.length);
             setHeight(p.blocks.length * 4.2);
 
+            // Spawn next block & change crosswind
+            spawnNewBlock();
+
           } else {
-            // MISSED ENTIRELY! Play descending sweep alarm sound
+            // MISSED ENTIRELY! Trigger gravity tumble
             p.isFalling = false;
             p.isTumbling = true;
-            p.tumbleVx = dx * 0.12; // drift away in direction of error
-            p.vy = 2;              // initial fall speed
+            p.tumbleVx = dx * 0.12; 
+            p.vy = 2;              
             p.tumbleRotation = 0;
             synth.playReset();
 
@@ -403,13 +444,12 @@ export default function GameScreen({
           }
         }
       } else if (p.isTumbling) {
-        // Tumble dynamics (sliding rotational falling)
+        // Tumble dynamics
         p.vy += p.gravity;
         p.blockY += p.vy;
         p.blockX += p.tumbleVx;
         p.tumbleRotation += 0.08;
 
-        // Reset once offscreen bottom
         if (p.blockY > p.canvasH + 60) {
           p.isTumbling = false;
           p.vy = 0;
@@ -420,13 +460,15 @@ export default function GameScreen({
           setCombo(1);
 
           if (nextLives <= 0) {
-            // Cancel requestAnimationFrame and update high scores
             cancelAnimationFrame(animId);
             synth.playGameOver();
             saveHighScoreIfNeeded(p.scoreCount);
             onGameOver(p.scoreCount, p.heightCount, p.blocksPlacedCount);
             return;
           }
+
+          // Spawn next block on life loss
+          spawnNewBlock();
         }
       } else {
         // Tied to hook
@@ -443,7 +485,7 @@ export default function GameScreen({
       c.fillStyle = "#080b09";
       c.fillRect(0, 0, w, h);
 
-      // 1. Draw grid backdrop (shifting with camera view for vertical movement feel!)
+      // 1. Draw grid backdrop
       c.strokeStyle = "rgba(51, 255, 51, 0.06)";
       c.lineWidth = 1;
       const gridW = 32;
@@ -462,7 +504,7 @@ export default function GameScreen({
         c.stroke();
       }
 
-      // 2. Draw static ground base (scrolling downwards out of view)
+      // 2. Draw static ground base
       const baseDrawY = baseY - p.cameraY;
       c.fillStyle = "#041404";
       c.strokeStyle = "#33ff33";
@@ -483,14 +525,22 @@ export default function GameScreen({
         const drawX = block.x + swayX;
         const drawY = block.y - p.cameraY;
 
-        // Skip drawing if completely off-screen bottom to save cycles
         if (drawY > h + p.blockH) return;
 
         c.save();
         c.translate(drawX, drawY);
 
         c.fillStyle = block.color;
-        c.strokeStyle = "#33ff33";
+        
+        // Custom retro border colors based on block type
+        if (block.type === "GOLD") {
+          c.strokeStyle = "#ffd700";
+        } else if (block.type === "GLASS") {
+          c.strokeStyle = "#33ffff";
+        } else {
+          c.strokeStyle = "#33ff33";
+        }
+        
         c.lineWidth = 3.5;
         c.beginPath();
         c.rect(-block.w / 2, -block.h / 2, block.w, block.h);
@@ -498,17 +548,23 @@ export default function GameScreen({
         c.stroke();
 
         // Glowing Windows
-        c.fillStyle = "#33ff33";
+        if (block.type === "GOLD") {
+          // Flashing glowing golden windows
+          c.fillStyle = p.time % 20 < 10 ? "#ffffff" : "#ffd700";
+        } else if (block.type === "GLASS") {
+          c.fillStyle = "rgba(51, 255, 255, 0.7)";
+        } else {
+          c.fillStyle = "#33ff33";
+        }
         c.fillRect(-16, -9, 8, 18);
         c.fillRect(8, -9, 8, 18);
 
-        // Window frames
         c.fillStyle = block.color;
         c.fillRect(-13, -9, 2, 18);
         c.fillRect(11, -9, 2, 18);
 
         // Block digital details
-        c.fillStyle = "#33ff33";
+        c.fillStyle = block.type === "GOLD" ? "#ffd700" : block.type === "GLASS" ? "#33ffff" : "#33ff33";
         c.font = 'bold 7px "Geist Mono", monospace';
         c.textAlign = "center";
         c.fillText(block.label, 0, 3);
@@ -526,29 +582,44 @@ export default function GameScreen({
       });
 
       // 5. Draw active falling/tumbling/carrying block
+      const borderFlashColor = p.currentBlockType === "GOLD" ? "#ffd700" : p.currentBlockType === "GLASS" ? "#33ffff" : "#33ff33";
+      
       if (p.isFalling || (!p.isFalling && !p.isTumbling)) {
         c.save();
         c.translate(p.blockX, p.blockY);
 
-        c.fillStyle = "#0e2b0e";
-        c.strokeStyle = "#33ff33";
+        if (p.currentBlockType === "GOLD") {
+          c.fillStyle = "#2b2200";
+        } else if (p.currentBlockType === "GLASS") {
+          c.fillStyle = "rgba(51, 255, 255, 0.15)";
+        } else {
+          c.fillStyle = "#0e2b0e";
+        }
+        
+        c.strokeStyle = borderFlashColor;
         c.lineWidth = 3.5;
         c.beginPath();
         c.rect(-p.blockW / 2, -p.blockH / 2, p.blockW, p.blockH);
         c.fill();
         c.stroke();
 
-        c.fillStyle = "#33ff33";
+        // Windows drawing
+        c.fillStyle = borderFlashColor;
         c.fillRect(-16, -9, 8, 18);
         c.fillRect(8, -9, 8, 18);
-        c.fillStyle = "#0e2b0e";
+        
+        c.fillStyle = p.currentBlockType === "GOLD" ? "#2b2200" : p.currentBlockType === "GLASS" ? "rgba(51, 255, 255, 0.05)" : "#0e2b0e";
         c.fillRect(-13, -9, 2, 18);
         c.fillRect(11, -9, 2, 18);
 
         if (!p.isFalling) {
+          c.fillStyle = borderFlashColor;
+          c.font = 'bold 8px "Geist Mono", monospace';
+          c.textAlign = "center";
+          c.fillText(p.currentBlockType, 0, 3);
+          
           c.fillStyle = "rgba(51, 255, 51, 0.4)";
           c.font = '8px "Geist Mono", monospace';
-          c.textAlign = "center";
           c.fillText("▼ DROP ▼", 0, 24);
         }
 
@@ -578,7 +649,7 @@ export default function GameScreen({
         c.save();
         c.fillStyle = txt.color;
         c.globalAlpha = txt.alpha;
-        c.font = 'bold 12px "Geist Mono", monospace';
+        c.font = 'bold 11px "Geist Mono", monospace';
         c.textAlign = "center";
         c.fillText(txt.text, txt.x, txt.y - p.cameraY);
         c.restore();
@@ -613,7 +684,7 @@ export default function GameScreen({
       c.stroke();
 
       if (!p.isFalling && !p.isTumbling) {
-        c.strokeStyle = "#33ff33";
+        c.strokeStyle = borderFlashColor;
         c.lineWidth = 1.5;
         c.beginPath();
         c.moveTo(p.hookX, p.hookY + 12);
@@ -621,7 +692,7 @@ export default function GameScreen({
         c.stroke();
       }
 
-      // 8. Render sway warning if sway amplitude is high
+      // 8. Render sway warning
       if (p.towerSwayAmplitude > 25 && p.swayFreezeCount === 0) {
         c.fillStyle = "rgba(255, 51, 51, 0.45)";
         c.font = 'bold 9px "Geist Mono", monospace';
@@ -629,7 +700,7 @@ export default function GameScreen({
         c.fillText("⚠️ DANGER: TOWER SWAYING ⚠️", w / 2, 90);
       }
 
-      // 9. DRAW SWAY LOCK COMBO INDICATOR (Sway Frozen overlay)
+      // 9. DRAW SWAY LOCK COMBO INDICATOR
       if (p.swayFreezeCount > 0) {
         c.save();
         c.fillStyle = "rgba(51, 255, 51, 0.9)";
@@ -637,7 +708,6 @@ export default function GameScreen({
         c.lineWidth = 1.5;
         c.font = 'bold 8px "Geist Mono", monospace';
         
-        // Draw small lock status box on top right
         c.beginPath();
         c.rect(w - 95, 85, 85, 20);
         c.fillStyle = "#041404";
@@ -648,6 +718,28 @@ export default function GameScreen({
         c.fillText(`🔒 SWAY LOCK: ${p.swayFreezeCount}`, w - 52, 98);
         c.restore();
       }
+
+      // 10. DRAW CROSSWIND RETRO GAUGE INDICATOR (vector layout arrow)
+      c.save();
+      c.strokeStyle = "#33ff33";
+      c.lineWidth = 1.5;
+      c.font = 'bold 8px "Geist Mono", monospace';
+      
+      c.beginPath();
+      c.rect(10, 85, 105, 20);
+      c.fillStyle = "#041404";
+      c.fill();
+      c.stroke();
+
+      c.fillStyle = "#33ff33";
+      c.textAlign = "left";
+      
+      const windLabel = p.wind === 0 
+        ? "WIND: CALM" 
+        : `WIND: ${p.wind > 0 ? ">>>" : "<<<"} ${Math.abs(p.wind * 10).toFixed(0)} KT`;
+      
+      c.fillText(windLabel, 16, 98);
+      c.restore();
     };
 
     animId = requestAnimationFrame(tick);
@@ -665,7 +757,7 @@ export default function GameScreen({
     
     if (!p.isFalling && !p.isTumbling) {
       p.isFalling = true;
-      p.vy = 2.5; // Initial impulse
+      p.vy = 2.5; 
       synth.playDrop();
     }
   };
@@ -696,6 +788,8 @@ export default function GameScreen({
     p.swayFreezeCount = 0;
     p.particles = [];
     p.floatingTexts = [];
+    
+    spawnNewBlock();
   };
 
   return (
