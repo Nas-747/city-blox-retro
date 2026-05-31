@@ -12,6 +12,7 @@ interface GameScreenProps {
 }
 
 type BlockType = "NORMAL" | "GOLD" | "GLASS";
+type PowerUpType = "GLUE" | "LASER";
 
 export default function GameScreen({
   onGameOver,
@@ -48,9 +49,9 @@ export default function GameScreen({
     gravity: 0.5,
     swingSpeed: 0.038,
     swingAmplitude: 115,
-    swingPhase: 0,          // Phase accumulator to prevent speed transition jumps
-    canvasW: 400, // Rigid Virtual Width
-    canvasH: 600, // Rigid Virtual Height
+    swingPhase: 0,          
+    canvasW: 400, 
+    canvasH: 600, 
     
     // Stacking physics parameters
     blocks: [] as Array<{
@@ -62,16 +63,27 @@ export default function GameScreen({
       label: string;
       type: BlockType;
     }>,
-    towerSwayAmplitude: 0, // Maximum swing width multiplier (used as swayIntensity)
+    towerSwayAmplitude: 0, // Maximum swing width multiplier (swayIntensity)
     swaySpeed: 0.022,       // Speed of wave oscillation
     cameraY: 0,             // Current scroll position
     targetCameraY: 0,       // Destination scroll position for smooth lerp
     swayFreezeCount: 0,     // Sway Freeze combo block count
-    perfectStreak: 0,       // Consecutively placed perfect drops streak
+    perfectStreak: 0,       
 
     // Crosswinds & Block Types parameters
     wind: 0,                // Floating number from -1.5 to 1.5
     currentBlockType: "NORMAL" as BlockType,
+
+    // Floating Power-ups parameters
+    powerUp: null as {
+      x: number;
+      y: number;
+      vx: number;
+      type: PowerUpType;
+      active: boolean;
+      radius: number;
+    } | null,
+    laserGuideCount: 0,     // Laser guide active block count
 
     // Interactive feedback overlays
     particles: [] as Array<{
@@ -115,7 +127,7 @@ export default function GameScreen({
     synth.setMute(nextMute);
   };
 
-  // Keyboard controls listener with clean unmounting to prevent memory leaks
+  // Keyboard controls listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space") {
@@ -142,7 +154,7 @@ export default function GameScreen({
   const spawnNewBlock = () => {
     const p = physicsRef.current;
     
-    // Spawning Types logic (80% Normal, 10% Gold, 10% Glass)
+    // Spawning Types logic
     const r = Math.random();
     if (r < 0.8) {
       p.currentBlockType = "NORMAL";
@@ -152,9 +164,30 @@ export default function GameScreen({
       p.currentBlockType = "GLASS";
     }
 
-    // Generate wind speed (-1.5 to 1.5)
     p.wind = (Math.random() * 3) - 1.5;
     setActiveWind(p.wind);
+  };
+
+  // Spawns a floating power-up icon drifting horizontally across the middle of the screen
+  const triggerPowerUpSpawn = () => {
+    const p = physicsRef.current;
+    
+    const type: PowerUpType = Math.random() < 0.5 ? "GLUE" : "LASER";
+    const startLeft = Math.random() < 0.5;
+    const x = startLeft ? -20 : 420;
+    
+    // Spawns near middle vertical height, adjusted above current stack top
+    const y = Math.max(220, p.canvasH - (p.blocks.length * p.blockH) - 140);
+    const vx = startLeft ? 1.5 : -1.5;
+
+    p.powerUp = {
+      x,
+      y,
+      vx,
+      type,
+      active: true,
+      radius: 14,
+    };
   };
 
   // Compute organic snake-like sway shift for any stack level
@@ -162,7 +195,6 @@ export default function GameScreen({
     const p = physicsRef.current;
     if (p.blocks.length === 0) return 0;
     
-    // IF SWAY IS FROZEN via combo, return 0 (sway is locked solid!)
     if (p.swayFreezeCount > 0) return 0;
     
     const ratio = (index + 1) / (p.blocks.length + 1);
@@ -235,7 +267,7 @@ export default function GameScreen({
       const centerX = w / 2;
       const baseY = h - 80;
 
-      // TOPPLE PANIC STATE CHECK: If tower sways wildly past 15-pixel amplitude
+      // TOPPLE PANIC STATE CHECK
       const isPanic = p.towerSwayAmplitude > 15;
 
       // Speed up swing by 1.5x during panic
@@ -249,7 +281,19 @@ export default function GameScreen({
       // 2. Camera vertical scroll tracking
       p.cameraY += (p.targetCameraY - p.cameraY) * 0.08;
 
-      // 3. Update particle dynamics
+      // 3. Update floating power-up physics
+      if (p.powerUp && p.powerUp.active) {
+        p.powerUp.x += p.powerUp.vx;
+        
+        // Deactivate once drifted completely off-screen
+        if (p.powerUp.vx > 0 && p.powerUp.x > w + 25) {
+          p.powerUp.active = false;
+        } else if (p.powerUp.vx < 0 && p.powerUp.x < -25) {
+          p.powerUp.active = false;
+        }
+      }
+
+      // 4. Update particle dynamics
       p.particles.forEach((part) => {
         part.x += part.vx;
         part.y += part.vy;
@@ -257,22 +301,96 @@ export default function GameScreen({
       });
       p.particles = p.particles.filter(part => part.alpha > 0);
 
-      // 4. Update floating texts
+      // 5. Update floating texts
       p.floatingTexts.forEach(txt => {
         txt.y -= 1.0;
         txt.alpha -= 0.02;
       });
       p.floatingTexts = p.floatingTexts.filter(txt => txt.alpha > 0);
 
-      // 5. Update drop physics
+      // 6. Update drop physics & Bounding-Box/Circle intersection power-up collisions
       if (p.isFalling) {
         p.vy += p.gravity;
         p.blockY += p.vy;
 
-        // DRIFT PHYSICS: Apply uniform horizontal wind force
+        // Apply wind drift
         p.blockX += p.wind;
 
-        // Collision check boundaries
+        // Bounding-box collision detection between falling block and floating power-up circle
+        if (p.powerUp && p.powerUp.active) {
+          const rectLeft = p.blockX - p.blockW / 2;
+          const rectRight = p.blockX + p.blockW / 2;
+          const rectTop = p.blockY - p.blockH / 2;
+          const rectBottom = p.blockY + p.blockH / 2;
+          
+          const circleLeft = p.powerUp.x - p.powerUp.radius;
+          const circleRight = p.powerUp.x + p.powerUp.radius;
+          const circleTop = p.powerUp.y - p.powerUp.radius;
+          const circleBottom = p.powerUp.y + p.powerUp.radius;
+
+          if (
+            rectRight >= circleLeft &&
+            rectLeft <= circleRight &&
+            rectBottom >= circleTop &&
+            rectTop <= circleBottom
+          ) {
+            // POWER-UP COLLECTED COLLISION TRIGGERED!
+            p.powerUp.active = false;
+            
+            // Sparkling synth chime sound
+            synth.playPerfect(4);
+
+            if (p.powerUp.type === "GLUE") {
+              // Reset sway Intensity to 0, completely stabilizing wobbly towers!
+              p.towerSwayAmplitude = 0;
+              p.floatingTexts.push({
+                x: p.powerUp.x,
+                y: p.powerUp.y - 15,
+                text: "✨ STABILIZED GLUE! ✨",
+                alpha: 1.0,
+                color: "#33ff33",
+              });
+
+              // Burst sticky green droplets particles
+              for (let k = 0; k < 15; k++) {
+                p.particles.push({
+                  x: p.powerUp.x,
+                  y: p.powerUp.y,
+                  vx: (Math.random() - 0.5) * 4,
+                  vy: (Math.random() - 0.5) * 4,
+                  alpha: 1.0,
+                  size: Math.random() * 3 + 2,
+                  color: "#33ff33",
+                });
+              }
+            } else if (p.powerUp.type === "LASER") {
+              // Enable dashed laser preview alignment lines for the next 3 blocks
+              p.laserGuideCount = 3;
+              p.floatingTexts.push({
+                x: p.powerUp.x,
+                y: p.powerUp.y - 15,
+                text: "⚡ LASER SIGHTS! ⚡",
+                alpha: 1.0,
+                color: "#33ffff",
+              });
+
+              // Burst glowing cyber cyan particles
+              for (let k = 0; k < 15; k++) {
+                p.particles.push({
+                  x: p.powerUp.x,
+                  y: p.powerUp.y,
+                  vx: (Math.random() - 0.5) * 4,
+                  vy: (Math.random() - 0.5) * 4,
+                  alpha: 1.0,
+                  size: Math.random() * 3 + 2,
+                  color: "#33ffff",
+                });
+              }
+            }
+          }
+        }
+
+        // Collision check stack boundaries
         const targetY = p.blocks.length === 0 
           ? baseY 
           : p.blocks[p.blocks.length - 1].y - p.blockH / 2;
@@ -287,13 +405,12 @@ export default function GameScreen({
 
         const targetW = p.blocks.length === 0 ? 100 : p.blockW;
 
-        // Check if block has touched target plane
         if (p.blockY + p.blockH / 2 >= targetY) {
           const dx = p.blockX - targetX;
-          const tolerance = targetW * 0.8; // Alignment target buffer
+          const tolerance = targetW * 0.8; 
 
           if (Math.abs(dx) <= tolerance) {
-            // SUCCESSFUL LANDING! Lock into rest grid
+            // SUCCESSFUL LANDING!
             p.isFalling = false;
             p.vy = 0;
 
@@ -301,7 +418,6 @@ export default function GameScreen({
             const restX = targetRestX + dx;
             const restY = baseY - p.blocks.length * p.blockH - p.blockH / 2;
 
-            // Generate block color variations based on block type
             let color = "#0e2b0e";
             if (p.currentBlockType === "GOLD") {
               color = "#ffd700"; 
@@ -322,7 +438,6 @@ export default function GameScreen({
               type: p.currentBlockType,
             });
 
-            // Alignment perfect drop windows check (GLASS has 2.0px perfect tolerance window)
             const perfectThreshold = p.currentBlockType === "GLASS" ? 2.0 : 4.0;
             const offsetDist = Math.abs(dx);
             
@@ -330,16 +445,19 @@ export default function GameScreen({
               p.swayFreezeCount -= 1;
             }
 
+            // Decrement active laser guide block charges
+            if (p.laserGuideCount > 0) {
+              p.laserGuideCount -= 1;
+            }
+
             const goldMultiplier = p.currentBlockType === "GOLD" ? 2 : 1;
 
             if (offsetDist <= perfectThreshold) {
-              // PERFECT DROP!
               p.swayFreezeCount = 2;
-              p.perfectStreak += 1; // Increment perfect drops in a row streak
+              p.perfectStreak += 1; 
               
-              // STREAK STABILIZATION: If 2 perfect drops landed consecutively, calm sway intensity
               if (p.perfectStreak >= 2) {
-                p.towerSwayAmplitude = 0; // Completely stabilize the building
+                p.towerSwayAmplitude = 0; 
               } else {
                 p.towerSwayAmplitude = Math.max(0, p.towerSwayAmplitude - 6);
               }
@@ -363,7 +481,6 @@ export default function GameScreen({
 
               synth.playPerfect(p.comboCount);
 
-              // Star explosion particle colors based on block type
               const particleColor = p.currentBlockType === "GOLD" ? "#ffd700" : p.currentBlockType === "GLASS" ? "#33ffff" : "#33ff33";
 
               const bannerText = p.perfectStreak >= 2 
@@ -394,7 +511,6 @@ export default function GameScreen({
                 });
               }
             } else if (offsetDist <= 13) {
-              // GREAT DROP! (Streak broken)
               p.perfectStreak = 0;
               
               synth.playLand();
@@ -413,7 +529,6 @@ export default function GameScreen({
                 color: p.currentBlockType === "GOLD" ? "#ffd700" : "#33ff33",
               });
             } else {
-              // GOOD Drop (Streak broken)
               p.perfectStreak = 0;
               
               synth.playLand();
@@ -444,10 +559,14 @@ export default function GameScreen({
             setBlocksCount(p.blocks.length);
             setHeight(p.blocks.length * 4.2);
 
+            // POWER-UP TRIGGER EVENT: Spawn floating helper icon every 5 blocks placed
+            if (p.blocks.length > 0 && p.blocks.length % 5 === 0) {
+              triggerPowerUpSpawn();
+            }
+
             spawnNewBlock();
 
           } else {
-            // MISSED ENTIRELY! (Streak broken)
             p.perfectStreak = 0;
             
             p.isFalling = false;
@@ -507,10 +626,8 @@ export default function GameScreen({
       c.fillStyle = "#080b09";
       c.fillRect(0, 0, w, h);
 
-      // TOPPLE PANIC STATE CHECK: If tower sways wildly past 15-pixel amplitude
       const isPanic = p.towerSwayAmplitude > 15;
 
-      // VIEWPORT SCREEN-SHAKE ROUTINE: Shake scene context by translating if in panic state
       c.save();
       if (isPanic) {
         const shakeX = (Math.random() - 0.5) * 4.5;
@@ -579,7 +696,6 @@ export default function GameScreen({
         c.fill();
         c.stroke();
 
-        // Windows drawing
         if (block.type === "GOLD") {
           c.fillStyle = p.time % 20 < 10 ? "#ffffff" : "#ffd700";
         } else if (block.type === "GLASS") {
@@ -602,7 +718,46 @@ export default function GameScreen({
         c.restore();
       });
 
-      // 4. Draw confetti glowing star particles
+      // 4. Draw floating power-up entity
+      if (p.powerUp && p.powerUp.active) {
+        const drawY = p.powerUp.y - p.cameraY;
+        
+        // Skip drawing if completely off-screen vertical scroll bounds
+        if (drawY > -30 && drawY < h + 30) {
+          c.save();
+          c.translate(p.powerUp.x, drawY);
+          
+          // Flash colors for pixel-art indicators
+          const isLaser = p.powerUp.type === "LASER";
+          const glowColor = isLaser ? "#33ffff" : "#33ff33";
+          
+          c.strokeStyle = glowColor;
+          c.lineWidth = 2.5;
+          c.fillStyle = "#041404";
+          c.beginPath();
+          c.arc(0, 0, p.powerUp.radius, 0, Math.PI * 2);
+          c.fill();
+          c.stroke();
+          
+          // Glowing border ring
+          c.strokeStyle = "rgba(51, 255, 255, 0.35)";
+          c.lineWidth = 1;
+          c.beginPath();
+          c.arc(0, 0, p.powerUp.radius + 4 + Math.sin(p.time * 0.15) * 2, 0, Math.PI * 2);
+          c.stroke();
+
+          // Pixel-art letter indicators
+          c.fillStyle = glowColor;
+          c.font = 'black 11px "Geist Mono", monospace';
+          c.textAlign = "center";
+          c.textBaseline = "middle";
+          c.fillText(isLaser ? "L" : "G", 0, 0);
+
+          c.restore();
+        }
+      }
+
+      // 5. Draw confetti glowing star particles
       p.particles.forEach(part => {
         c.save();
         c.globalAlpha = part.alpha;
@@ -611,9 +766,29 @@ export default function GameScreen({
         c.restore();
       });
 
-      // 5. Draw active falling/tumbling/carrying block
+      // 6. Draw active falling/tumbling/carrying block
       const borderFlashColor = p.currentBlockType === "GOLD" ? "#ffd700" : p.currentBlockType === "GLASS" ? "#33ffff" : "#33ff33";
       
+      // Calculate target vertical collision plane height
+      const targetY = p.blocks.length === 0 
+        ? baseY 
+        : p.blocks[p.blocks.length - 1].y - p.blockH / 2;
+
+      // 7. CYBER DASHED LASER GUIDE PREVIEW LINE (Drawn if laser sights charges active!)
+      if (p.laserGuideCount > 0 && !p.isTumbling) {
+        c.save();
+        c.strokeStyle = "rgba(51, 255, 255, 0.65)";
+        c.lineWidth = 2.0;
+        c.setLineDash([5, 5]);
+        c.beginPath();
+        
+        // Project straight down from hook/carrying block center to active stack surface
+        c.moveTo(p.blockX, p.blockY);
+        c.lineTo(p.blockX, targetY);
+        c.stroke();
+        c.restore();
+      }
+
       if (p.isFalling || (!p.isFalling && !p.isTumbling)) {
         c.save();
         c.translate(p.blockX, p.blockY);
@@ -673,7 +848,7 @@ export default function GameScreen({
         c.restore();
       }
 
-      // 6. Draw floating score metrics
+      // 8. Draw floating score metrics
       p.floatingTexts.forEach(txt => {
         c.save();
         c.fillStyle = txt.color;
@@ -684,7 +859,7 @@ export default function GameScreen({
         c.restore();
       });
 
-      // 7. Draw Crane Anchor and cables (drawn inside the shaking context to make crane sway as well!)
+      // 9. Draw Crane Anchor and cables (drawn inside the shaking context to make crane sway as well!)
       c.strokeStyle = "#1e3a24";
       c.lineWidth = 6;
       c.beginPath();
@@ -724,12 +899,12 @@ export default function GameScreen({
       // Restore screen-shake context translation matrix
       c.restore();
 
-      // 8. Render sway and panic warning at absolute top position (so text is readable!)
+      // 10. Render warning alerts
       if (isPanic) {
         c.fillStyle = "#ff3333";
         c.font = 'bold 10px "Geist Mono", monospace';
         c.textAlign = "center";
-        c.fillText("⚠️ TOUGHER CONDITIONS: TOUPLE PANIC ACTIVE! ⚠️", w / 2, 90);
+        c.fillText("⚠️ CONDITIONS: TOUPLE PANIC ACTIVE! ⚠️", w / 2, 90);
         c.font = '8px "Geist Mono", monospace';
         c.fillStyle = "#ff3333/75";
         c.fillText("LAND 2 PERFECTS IN A ROW TO STABILIZE BUILDING!", w / 2, 102);
@@ -740,7 +915,7 @@ export default function GameScreen({
         c.fillText("⚠️ WARNING: TOWER SWAYING ⚠️", w / 2, 90);
       }
 
-      // 9. DRAW SWAY LOCK COMBO INDICATOR
+      // 11. DRAW SWAY LOCK COMBO INDICATOR
       if (p.swayFreezeCount > 0) {
         c.save();
         c.fillStyle = "rgba(51, 255, 51, 0.9)";
@@ -759,7 +934,26 @@ export default function GameScreen({
         c.restore();
       }
 
-      // 10. DRAW CROSSWIND RETRO GAUGE INDICATOR
+      // 12. DRAW LASER POWER-UP INDICATOR HUD CHARGES
+      if (p.laserGuideCount > 0) {
+        c.save();
+        c.fillStyle = "rgba(51, 255, 255, 0.9)";
+        c.strokeStyle = "#33ffff";
+        c.lineWidth = 1.5;
+        c.font = 'bold 8px "Geist Mono", monospace';
+        
+        c.beginPath();
+        c.rect(w - 95, 140, 85, 20);
+        c.fillStyle = "#041414";
+        c.fill();
+        c.stroke();
+        
+        c.fillStyle = "#33ffff";
+        c.fillText(`⚡ LASER: x${p.laserGuideCount}`, w - 52, 153);
+        c.restore();
+      }
+
+      // 13. DRAW CROSSWIND RETRO GAUGE INDICATOR
       c.save();
       c.strokeStyle = "#33ff33";
       c.lineWidth = 1.5;
@@ -827,6 +1021,8 @@ export default function GameScreen({
     p.targetCameraY = 0;
     p.swayFreezeCount = 0;
     p.perfectStreak = 0;
+    p.powerUp = null;
+    p.laserGuideCount = 0;
     p.particles = [];
     p.floatingTexts = [];
     
