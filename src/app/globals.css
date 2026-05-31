@@ -1,26 +1,92 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #080b09;
+  --foreground: #f8f9fa;
+  --retro-green: #33ff33;
+  --retro-dark-green: #0e2b0e;
+  --retro-border: #1e3a24;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-retro-green: var(--retro-green);
+  --color-retro-dark: var(--retro-dark-green);
+  --color-retro-border: var(--retro-border);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-mono), monospace;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Retro CRT scanline effect overlay */
+.scanlines {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.25) 50%
+  ), linear-gradient(
+    90deg,
+    rgba(255, 0, 0, 0.06),
+    rgba(0, 255, 0, 0.02),
+    rgba(0, 0, 255, 0.06)
+  );
+  background-size: 100% 4px, 6px 100%;
+  pointer-events: none;
+  z-index: 9999;
 }
+
+/* Glow effects for text and borders */
+.glow-green {
+  text-shadow: 0 0 5px rgba(51, 255, 51, 0.7), 0 0 10px rgba(51, 255, 51, 0.5);
+}
+
+.glow-box-green {
+  box-shadow: 0 0 8px rgba(51, 255, 51, 0.3), inset 0 0 8px rgba(51, 255, 51, 0.2);
+}
+
+/* Retro buttons that depress dynamically */
+.retro-btn {
+  background-color: var(--retro-dark-green);
+  border: 4px solid var(--retro-green);
+  color: var(--retro-green);
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: bold;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.75rem;
+  transition: all 0.1s ease;
+  box-shadow: 4px 4px 0px 0px var(--retro-border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.retro-btn:hover {
+  background-color: var(--retro-green);
+  color: #080b09;
+  box-shadow: 4px 4px 0px 0px var(--retro-green);
+}
+
+.retro-btn:active {
+  transform: translate(4px, 4px);
+  box-shadow: 0px 0px 0px 0px var(--retro-border);
+}
+
+/* Retro Border/Card styling */
+.retro-border {
+  border: 4px solid var(--retro-green);
+  box-shadow: 6px 6px 0px 0px var(--retro-border);
+}
+
