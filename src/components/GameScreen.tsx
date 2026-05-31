@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import RetroHUD from "./RetroHUD";
 import { synth } from "@/utils/audio";
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Shield, Lock } from "lucide-react";
+import { Play, Pause, RotateCcw, Volume2, VolumeX } from "lucide-react";
 
 interface GameScreenProps {
   onGameOver: (finalScore: number, finalHeight: number, finalBlocks: number) => void;
@@ -30,6 +30,11 @@ export default function GameScreen({
   const [maxCombo, setMaxCombo] = useState(1);
   const [muted, setMuted] = useState(false);
   const [activeWind, setActiveWind] = useState(0);
+
+  // New React state variables to push wobbly/helper stats cleanly to HUD overlays
+  const [laserCharges, setLaserCharges] = useState(0);
+  const [swayLockCharges, setSwayLockCharges] = useState(0);
+  const [isPanicState, setIsPanicState] = useState(false);
 
   // High performance game variables kept in refs to bypass React state latency in physics loops
   const physicsRef = useRef({
@@ -267,8 +272,26 @@ export default function GameScreen({
       const centerX = w / 2;
       const baseY = h - 80;
 
-      // TOPPLE PANIC STATE CHECK
+      // 1. TOPPLE PANIC STATE CHECK
       const isPanic = p.towerSwayAmplitude > 15;
+
+      // CONTINUOUS PANIC RUMBLE OSCILLATION TRIGGER
+      if (isPanic) {
+        synth.startRumble();
+      } else {
+        synth.stopRumble();
+      }
+
+      // React HUD synchronizations (only triggers React re-renders when statistics actually step/change!)
+      if (p.laserGuideCount !== laserCharges) {
+        setLaserCharges(p.laserGuideCount);
+      }
+      if (p.swayFreezeCount !== swayLockCharges) {
+        setSwayLockCharges(p.swayFreezeCount);
+      }
+      if (isPanic !== isPanicState) {
+        setIsPanicState(isPanic);
+      }
 
       // Speed up swing by 1.5x during panic
       const currentSwingSpeed = isPanic ? p.swingSpeed * 1.5 : p.swingSpeed;
@@ -337,11 +360,10 @@ export default function GameScreen({
             // POWER-UP COLLECTED COLLISION TRIGGERED!
             p.powerUp.active = false;
             
-            // Sparkling synth chime sound
-            synth.playPerfect(4);
+            // Sparkling rapid arpeggio sound snatch sequence
+            synth.playPowerUp();
 
             if (p.powerUp.type === "GLUE") {
-              // Reset sway Intensity to 0, completely stabilizing wobbly towers!
               p.towerSwayAmplitude = 0;
               p.floatingTexts.push({
                 x: p.powerUp.x,
@@ -351,7 +373,6 @@ export default function GameScreen({
                 color: "#33ff33",
               });
 
-              // Burst sticky green droplets particles
               for (let k = 0; k < 15; k++) {
                 p.particles.push({
                   x: p.powerUp.x,
@@ -364,7 +385,6 @@ export default function GameScreen({
                 });
               }
             } else if (p.powerUp.type === "LASER") {
-              // Enable dashed laser preview alignment lines for the next 3 blocks
               p.laserGuideCount = 3;
               p.floatingTexts.push({
                 x: p.powerUp.x,
@@ -374,7 +394,6 @@ export default function GameScreen({
                 color: "#33ffff",
               });
 
-              // Burst glowing cyber cyan particles
               for (let k = 0; k < 15; k++) {
                 p.particles.push({
                   x: p.powerUp.x,
@@ -445,7 +464,6 @@ export default function GameScreen({
               p.swayFreezeCount -= 1;
             }
 
-            // Decrement active laser guide block charges
             if (p.laserGuideCount > 0) {
               p.laserGuideCount -= 1;
             }
@@ -559,7 +577,7 @@ export default function GameScreen({
             setBlocksCount(p.blocks.length);
             setHeight(p.blocks.length * 4.2);
 
-            // POWER-UP TRIGGER EVENT: Spawn floating helper icon every 5 blocks placed
+            // POWER-UP TRIGGER EVENT
             if (p.blocks.length > 0 && p.blocks.length % 5 === 0) {
               triggerPowerUpSpawn();
             }
@@ -722,12 +740,10 @@ export default function GameScreen({
       if (p.powerUp && p.powerUp.active) {
         const drawY = p.powerUp.y - p.cameraY;
         
-        // Skip drawing if completely off-screen vertical scroll bounds
         if (drawY > -30 && drawY < h + 30) {
           c.save();
           c.translate(p.powerUp.x, drawY);
           
-          // Flash colors for pixel-art indicators
           const isLaser = p.powerUp.type === "LASER";
           const glowColor = isLaser ? "#33ffff" : "#33ff33";
           
@@ -739,14 +755,12 @@ export default function GameScreen({
           c.fill();
           c.stroke();
           
-          // Glowing border ring
           c.strokeStyle = "rgba(51, 255, 255, 0.35)";
           c.lineWidth = 1;
           c.beginPath();
           c.arc(0, 0, p.powerUp.radius + 4 + Math.sin(p.time * 0.15) * 2, 0, Math.PI * 2);
           c.stroke();
 
-          // Pixel-art letter indicators
           c.fillStyle = glowColor;
           c.font = 'black 11px "Geist Mono", monospace';
           c.textAlign = "center";
@@ -769,12 +783,11 @@ export default function GameScreen({
       // 6. Draw active falling/tumbling/carrying block
       const borderFlashColor = p.currentBlockType === "GOLD" ? "#ffd700" : p.currentBlockType === "GLASS" ? "#33ffff" : "#33ff33";
       
-      // Calculate target vertical collision plane height
       const targetY = p.blocks.length === 0 
         ? baseY 
         : p.blocks[p.blocks.length - 1].y - p.blockH / 2;
 
-      // 7. CYBER DASHED LASER GUIDE PREVIEW LINE (Drawn if laser sights charges active!)
+      // 7. CYBER DASHED LASER GUIDE PREVIEW LINE
       if (p.laserGuideCount > 0 && !p.isTumbling) {
         c.save();
         c.strokeStyle = "rgba(51, 255, 255, 0.65)";
@@ -782,7 +795,6 @@ export default function GameScreen({
         c.setLineDash([5, 5]);
         c.beginPath();
         
-        // Project straight down from hook/carrying block center to active stack surface
         c.moveTo(p.blockX, p.blockY);
         c.lineTo(p.blockX, targetY);
         c.stroke();
@@ -859,7 +871,7 @@ export default function GameScreen({
         c.restore();
       });
 
-      // 9. Draw Crane Anchor and cables (drawn inside the shaking context to make crane sway as well!)
+      // 9. Draw Crane Anchor and cables
       c.strokeStyle = "#1e3a24";
       c.lineWidth = 6;
       c.beginPath();
@@ -898,82 +910,6 @@ export default function GameScreen({
 
       // Restore screen-shake context translation matrix
       c.restore();
-
-      // 10. Render warning alerts
-      if (isPanic) {
-        c.fillStyle = "#ff3333";
-        c.font = 'bold 10px "Geist Mono", monospace';
-        c.textAlign = "center";
-        c.fillText("⚠️ CONDITIONS: TOUPLE PANIC ACTIVE! ⚠️", w / 2, 90);
-        c.font = '8px "Geist Mono", monospace';
-        c.fillStyle = "#ff3333/75";
-        c.fillText("LAND 2 PERFECTS IN A ROW TO STABILIZE BUILDING!", w / 2, 102);
-      } else if (p.towerSwayAmplitude > 25 && p.swayFreezeCount === 0) {
-        c.fillStyle = "rgba(255, 51, 51, 0.45)";
-        c.font = 'bold 9px "Geist Mono", monospace';
-        c.textAlign = "center";
-        c.fillText("⚠️ WARNING: TOWER SWAYING ⚠️", w / 2, 90);
-      }
-
-      // 11. DRAW SWAY LOCK COMBO INDICATOR
-      if (p.swayFreezeCount > 0) {
-        c.save();
-        c.fillStyle = "rgba(51, 255, 51, 0.9)";
-        c.strokeStyle = "#33ff33";
-        c.lineWidth = 1.5;
-        c.font = 'bold 8px "Geist Mono", monospace';
-        
-        c.beginPath();
-        c.rect(w - 95, 115, 85, 20);
-        c.fillStyle = "#041404";
-        c.fill();
-        c.stroke();
-        
-        c.fillStyle = "#33ff33";
-        c.fillText(`🔒 SWAY LOCK: ${p.swayFreezeCount}`, w - 52, 128);
-        c.restore();
-      }
-
-      // 12. DRAW LASER POWER-UP INDICATOR HUD CHARGES
-      if (p.laserGuideCount > 0) {
-        c.save();
-        c.fillStyle = "rgba(51, 255, 255, 0.9)";
-        c.strokeStyle = "#33ffff";
-        c.lineWidth = 1.5;
-        c.font = 'bold 8px "Geist Mono", monospace';
-        
-        c.beginPath();
-        c.rect(w - 95, 140, 85, 20);
-        c.fillStyle = "#041414";
-        c.fill();
-        c.stroke();
-        
-        c.fillStyle = "#33ffff";
-        c.fillText(`⚡ LASER: x${p.laserGuideCount}`, w - 52, 153);
-        c.restore();
-      }
-
-      // 13. DRAW CROSSWIND RETRO GAUGE INDICATOR
-      c.save();
-      c.strokeStyle = "#33ff33";
-      c.lineWidth = 1.5;
-      c.font = 'bold 8px "Geist Mono", monospace';
-      
-      c.beginPath();
-      c.rect(10, 115, 105, 20);
-      c.fillStyle = "#041404";
-      c.fill();
-      c.stroke();
-
-      c.fillStyle = "#33ff33";
-      c.textAlign = "left";
-      
-      const windLabel = p.wind === 0 
-        ? "WIND: CALM" 
-        : `WIND: ${p.wind > 0 ? ">>>" : "<<<"} ${Math.abs(p.wind * 10).toFixed(0)} KT`;
-      
-      c.fillText(windLabel, 16, 128);
-      c.restore();
     };
 
     animId = requestAnimationFrame(tick);
@@ -981,8 +917,11 @@ export default function GameScreen({
     return () => {
       window.removeEventListener("resize", resizeVirtualScreen);
       cancelAnimationFrame(animId);
+      
+      // SAFE GRACEFUL AUDIO UNMOUNT CLEANUP: Stop alarm sound loop on unmount immediately!
+      synth.stopRumble();
     };
-  }, [isPaused]);
+  }, [isPaused, laserCharges, swayLockCharges, isPanicState]);
 
   // Release the active block
   const triggerBlockRelease = () => {
@@ -1003,6 +942,9 @@ export default function GameScreen({
     setHeight(0);
     setBlocksCount(0);
     setMaxCombo(1);
+
+    // Stop panic sound loops immediately on restart!
+    synth.stopRumble();
 
     const p = physicsRef.current;
     p.isFalling = false;
@@ -1032,7 +974,7 @@ export default function GameScreen({
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#080b09]">
       
-      {/* Retro HUD overlay */}
+      {/* Retro HUD overlay connecting all dynamic state trackers */}
       <RetroHUD
         score={score}
         combo={combo}
@@ -1040,6 +982,10 @@ export default function GameScreen({
         height={height}
         blocksCount={blocksCount}
         maxCombo={maxCombo}
+        wind={activeWind}
+        laserCharges={laserCharges}
+        swayLockCharges={swayLockCharges}
+        isPanic={isPanicState}
       />
 
       {/* Main retro cabinet/screen body wrapper */}
