@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import RetroHUD from "./RetroHUD";
 import { synth } from "@/utils/audio";
-import { Play, Pause, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { Play, Pause, RotateCcw, Volume2, VolumeX, ShieldAlert } from "lucide-react";
 
 interface GameScreenProps {
   onGameOver: (finalScore: number, finalHeight: number, finalBlocks: number) => void;
@@ -32,18 +32,54 @@ export default function GameScreen({
     time: 0,
     hookX: 200,
     hookY: 60,
-    ropeLength: 100,
+    ropeLength: 90,
     blockX: 200,
-    blockY: 160,
-    blockW: 60,
-    blockH: 40,
+    blockY: 150,
+    blockW: 56,
+    blockH: 34,
     isFalling: false,
+    isTumbling: false,
+    tumbleVx: 0,
+    tumbleRotation: 0,
     vy: 0,
     gravity: 0.5,
-    swingSpeed: 0.04,
-    swingAmplitude: 120,
+    swingSpeed: 0.038,
+    swingAmplitude: 115,
     canvasW: 400,
     canvasH: 600,
+    
+    // Stacking physics parameters
+    blocks: [] as Array<{
+      x: number; // Resting Center X (no sway component)
+      y: number; // Resting Center Y (vertical height)
+      w: number;
+      h: number;
+      color: string;
+      label: string;
+    }>,
+    towerSwayAmplitude: 0, // Maximum swing width multiplier
+    swaySpeed: 0.022,       // Speed of wave oscillation
+    cameraY: 0,             // Current scroll position
+    targetCameraY: 0,       // Destination scroll position for smooth lerp
+    
+    // Interactive feedback overlays
+    particles: [] as Array<{
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      alpha: number;
+      size: number;
+      color: string;
+    }>,
+    floatingTexts: [] as Array<{
+      x: number;
+      y: number;
+      text: string;
+      alpha: number;
+      color: string;
+    }>,
+
     livesCount: 3,
     scoreCount: 0,
     heightCount: 0,
@@ -89,6 +125,20 @@ export default function GameScreen({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isPaused, onTogglePause, muted]);
 
+  // Compute organic snake-like sway shift for any stack level
+  const getBlockSway = (index: number, time: number) => {
+    const p = physicsRef.current;
+    if (p.blocks.length === 0) return 0;
+    
+    // Multiplier increases as we ascend the skyscraper (base remains rigid)
+    const ratio = (index + 1) / (p.blocks.length + 1);
+    const maxSway = p.towerSwayAmplitude * ratio;
+    
+    // Wave phase shift with index creates flexible fluid motion
+    const wavePhase = time * p.swaySpeed - index * 0.22;
+    return maxSway * Math.sin(wavePhase);
+  };
+
   // Game Loop Animation
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -100,9 +150,7 @@ export default function GameScreen({
     let animId: number;
     const p = physicsRef.current;
 
-    // Rigid dimensions for retro virtual viewport (400 width x 600 height)
     const resizeVirtualScreen = () => {
-      // Let's draw sharp pixel double buffers by sizing canvas to physical size
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       canvas.width = rect.width * dpr;
@@ -126,27 +174,193 @@ export default function GameScreen({
     };
 
     const updatePhysics = () => {
-      // 1. Swing calculation
       p.time += 1;
-      const centerX = p.canvasW / 2;
-      
-      // Swing center position using sin wave
+      const w = p.canvasW;
+      const h = p.canvasH;
+      const centerX = w / 2;
+      const baseY = h - 80;
+
+      // 1. Crane swing calculation
       p.hookX = centerX + p.swingAmplitude * Math.sin(p.time * p.swingSpeed);
 
-      // 2. Drop physics
+      // Dampen sway over time (natural friction dampening)
+      p.towerSwayAmplitude *= 0.996;
+
+      // 2. Camera vertical scroll tracking (smooth camera interpolation)
+      p.cameraY += (p.targetCameraY - p.cameraY) * 0.08;
+
+      // 3. Update particle dynamics
+      p.particles.forEach((part, idx) => {
+        part.x += part.vx;
+        part.y += part.vy;
+        part.alpha -= 0.025;
+      });
+      p.particles = p.particles.filter(part => part.alpha > 0);
+
+      // 4. Update floating texts
+      p.floatingTexts.forEach(txt => {
+        txt.y -= 1.0;
+        txt.alpha -= 0.02;
+      });
+      p.floatingTexts = p.floatingTexts.filter(txt => txt.alpha > 0);
+
+      // 5. Update drop physics
       if (p.isFalling) {
         p.vy += p.gravity;
         p.blockY += p.vy;
 
-        // Reset if it drops below canvas viewport bottom boundary
-        if (p.blockY > p.canvasH + 50) {
-          p.isFalling = false;
-          p.vy = 0;
-          
-          // Sound trigger
-          synth.playReset();
+        // Collision check boundaries
+        const targetY = p.blocks.length === 0 
+          ? baseY 
+          : p.blocks[p.blocks.length - 1].y - p.blockH / 2;
 
-          // Deduct life
+        const targetSway = p.blocks.length === 0 
+          ? 0 
+          : getBlockSway(p.blocks.length - 1, p.time);
+
+        const targetX = p.blocks.length === 0 
+          ? w / 2 
+          : p.blocks[p.blocks.length - 1].x + targetSway;
+
+        const targetW = p.blocks.length === 0 ? 100 : p.blockW;
+
+        // Check if block has touched target plane
+        if (p.blockY + p.blockH / 2 >= targetY) {
+          const dx = p.blockX - targetX;
+          const tolerance = targetW * 0.8; // Alignment target buffer
+
+          if (Math.abs(dx) <= tolerance) {
+            // SUCCESSFUL LANDING! Lock into rest grid
+            p.isFalling = false;
+            p.vy = 0;
+
+            const targetRestX = p.blocks.length === 0 ? w / 2 : p.blocks[p.blocks.length - 1].x;
+            const restX = targetRestX + dx;
+            const restY = baseY - p.blocks.length * p.blockH - p.blockH / 2;
+
+            // Generate block color variations (retro green scaling)
+            const blockColors = ["#0e2b0e", "#133b13", "#1c4e1c", "#246424"];
+            const color = blockColors[p.blocks.length % blockColors.length];
+
+            p.blocks.push({
+              x: restX,
+              y: restY,
+              w: p.blockW,
+              h: p.blockH,
+              color,
+              label: `F${p.blocks.length + 1}`
+            });
+
+            // Alignment metrics feedback
+            const offsetDist = Math.abs(dx);
+            if (offsetDist <= 5) {
+              // PERFECT DROP!
+              synth.playPerfect(p.comboCount);
+              const comboBonus = p.comboCount;
+              setScore(prev => prev + 500 * comboBonus);
+              setCombo(prev => {
+                const next = prev + 1;
+                if (next > p.maxComboCount) {
+                  p.maxComboCount = next;
+                  setMaxCombo(next);
+                }
+                return next;
+              });
+
+              // Calm the skyscraper wobbling as reward
+              p.towerSwayAmplitude = Math.max(0, p.towerSwayAmplitude - 5);
+
+              // Trigger Floating text banner
+              p.floatingTexts.push({
+                x: p.blockX,
+                y: p.blockY - 20,
+                text: "★ PERFECT ★",
+                alpha: 1.0,
+                color: "#33ff33",
+              });
+
+              // Explode green glow stars particles
+              for (let i = 0; i < 18; i++) {
+                p.particles.push({
+                  x: p.blockX,
+                  y: p.blockY + p.blockH / 2,
+                  vx: (Math.random() - 0.5) * 5,
+                  vy: -Math.random() * 3 - 1,
+                  alpha: 1.0,
+                  size: Math.random() * 3.5 + 1.5,
+                  color: "#33ff33",
+                });
+              }
+            } else if (offsetDist <= 13) {
+              // GREAT DROP!
+              synth.playLand();
+              setScore(prev => prev + 250);
+              setCombo(1);
+
+              p.floatingTexts.push({
+                x: p.blockX,
+                y: p.blockY - 20,
+                text: "GREAT!",
+                alpha: 1.0,
+                color: "#33ff33",
+              });
+            } else {
+              // GOOD (Wobbly) Drop
+              synth.playLand();
+              setScore(prev => prev + 100);
+              setCombo(1);
+
+              // Accumulate tower offset sway energy
+              p.towerSwayAmplitude = Math.min(75, p.towerSwayAmplitude + offsetDist * 0.55);
+
+              p.floatingTexts.push({
+                x: p.blockX,
+                y: p.blockY - 20,
+                text: "WOBBLE!",
+                alpha: 1.0,
+                color: "#1e3a24",
+              });
+            }
+
+            // Push camera target upwards once we stacked over 2 levels
+            if (p.blocks.length >= 2) {
+              p.targetCameraY = (p.blocks.length - 1.5) * p.blockH;
+            }
+
+            // Sync stats
+            setBlocksCount(p.blocks.length);
+            setHeight(p.blocks.length * 4.2);
+
+          } else {
+            // MISSED ENTIRELY! Trigger gravity tumble
+            p.isFalling = false;
+            p.isTumbling = true;
+            p.tumbleVx = dx * 0.12; // drift away in direction of error
+            p.vy = 2;              // initial fall speed
+            p.tumbleRotation = 0;
+            synth.playReset();
+
+            p.floatingTexts.push({
+              x: p.blockX,
+              y: p.blockY - 20,
+              text: "MISS!",
+              alpha: 1.0,
+              color: "#ff3333",
+            });
+          }
+        }
+      } else if (p.isTumbling) {
+        // Tumble dynamics (sliding rotational falling)
+        p.vy += p.gravity;
+        p.blockY += p.vy;
+        p.blockX += p.tumbleVx;
+        p.tumbleRotation += 0.08;
+
+        // Reset once offscreen bottom
+        if (p.blockY > p.canvasH + 60) {
+          p.isTumbling = false;
+          p.vy = 0;
+
           const nextLives = p.livesCount - 1;
           setLives(nextLives);
           setCombo(1);
@@ -157,7 +371,7 @@ export default function GameScreen({
           }
         }
       } else {
-        // Carry block under crane hook if not detached yet
+        // Tied to hook
         p.blockX = p.hookX;
         p.blockY = p.hookY + p.ropeLength;
       }
@@ -166,29 +380,155 @@ export default function GameScreen({
     const renderScene = (c: CanvasRenderingContext2D) => {
       const w = p.canvasW;
       const h = p.canvasH;
+      const baseY = h - 80;
 
-      // Clear viewport
       c.fillStyle = "#080b09";
       c.fillRect(0, 0, w, h);
 
-      // Draw Retro Grid Layout
-      c.strokeStyle = "rgba(51, 255, 51, 0.08)";
+      // 1. Draw grid backdrop (shifting with camera view for vertical movement feel!)
+      c.strokeStyle = "rgba(51, 255, 51, 0.06)";
       c.lineWidth = 1;
       const gridW = 32;
+      
+      // Calculate layout shift offset based on camera position
+      const scrollShift = p.cameraY % gridW;
       for (let x = 0; x < w; x += gridW) {
         c.beginPath();
         c.moveTo(x, 0);
         c.lineTo(x, h);
         c.stroke();
       }
-      for (let y = 0; y < h; y += gridW) {
+      for (let y = scrollShift; y < h; y += gridW) {
         c.beginPath();
         c.moveTo(0, y);
         c.lineTo(w, y);
         c.stroke();
       }
 
-      // Draw Top Anchor Rod
+      // 2. Draw static ground base (scrolling downwards out of view)
+      const baseDrawY = baseY - p.cameraY;
+      c.fillStyle = "#041404";
+      c.strokeStyle = "#33ff33";
+      c.lineWidth = 4;
+      c.beginPath();
+      c.rect(w / 2 - 50, baseDrawY, 100, 40);
+      c.fill();
+      c.stroke();
+
+      c.fillStyle = "#33ff33";
+      c.font = 'bold 9px "Geist Mono", monospace';
+      c.textAlign = "center";
+      c.fillText("RETRO BASE", w / 2, baseDrawY + 24);
+
+      // 3. Draw active stacked skyscraper blocks
+      p.blocks.forEach((block, idx) => {
+        const swayX = getBlockSway(idx, p.time);
+        const drawX = block.x + swayX;
+        const drawY = block.y - p.cameraY;
+
+        // Skip drawing if completely off-screen bottom to save cycles
+        if (drawY > h + p.blockH) return;
+
+        c.save();
+        c.translate(drawX, drawY);
+
+        c.fillStyle = block.color;
+        c.strokeStyle = "#33ff33";
+        c.lineWidth = 3.5;
+        c.beginPath();
+        c.rect(-block.w / 2, -block.h / 2, block.w, block.h);
+        c.fill();
+        c.stroke();
+
+        // Glowing Windows
+        c.fillStyle = "#33ff33";
+        c.fillRect(-16, -9, 8, 18);
+        c.fillRect(8, -9, 8, 18);
+
+        // Window frames
+        c.fillStyle = block.color;
+        c.fillRect(-13, -9, 2, 18);
+        c.fillRect(11, -9, 2, 18);
+
+        // Block digital details
+        c.fillStyle = "#33ff33";
+        c.font = 'bold 7px "Geist Mono", monospace';
+        c.textAlign = "center";
+        c.fillText(block.label, 0, 3);
+
+        c.restore();
+      });
+
+      // 4. Draw confetti glowing star particles
+      p.particles.forEach(part => {
+        c.save();
+        c.globalAlpha = part.alpha;
+        c.fillStyle = part.color;
+        c.fillRect(part.x - part.size / 2, part.y - p.cameraY - part.size / 2, part.size, part.size);
+        c.restore();
+      });
+
+      // 5. Draw active falling/tumbling/carrying block
+      if (p.isFalling || (!p.isFalling && !p.isTumbling)) {
+        c.save();
+        // Dynamic camera adjustment does NOT apply to crane elements!
+        c.translate(p.blockX, p.blockY);
+
+        c.fillStyle = "#0e2b0e";
+        c.strokeStyle = "#33ff33";
+        c.lineWidth = 3.5;
+        c.beginPath();
+        c.rect(-p.blockW / 2, -p.blockH / 2, p.blockW, p.blockH);
+        c.fill();
+        c.stroke();
+
+        c.fillStyle = "#33ff33";
+        c.fillRect(-16, -9, 8, 18);
+        c.fillRect(8, -9, 8, 18);
+        c.fillStyle = "#0e2b0e";
+        c.fillRect(-13, -9, 2, 18);
+        c.fillRect(11, -9, 2, 18);
+
+        if (!p.isFalling) {
+          c.fillStyle = "rgba(51, 255, 51, 0.4)";
+          c.font = '8px "Geist Mono", monospace';
+          c.textAlign = "center";
+          c.fillText("▼ DROP ▼", 0, 24);
+        }
+
+        c.restore();
+      } else if (p.isTumbling) {
+        c.save();
+        c.translate(p.blockX, p.blockY - p.cameraY);
+        c.rotate(p.tumbleRotation);
+
+        c.fillStyle = "#220000";
+        c.strokeStyle = "#ff3333";
+        c.lineWidth = 3.5;
+        c.beginPath();
+        c.rect(-p.blockW / 2, -p.blockH / 2, p.blockW, p.blockH);
+        c.fill();
+        c.stroke();
+
+        c.fillStyle = "#ff3333";
+        c.fillRect(-16, -9, 8, 18);
+        c.fillRect(8, -9, 8, 18);
+
+        c.restore();
+      }
+
+      // 6. Draw floating score metrics
+      p.floatingTexts.forEach(txt => {
+        c.save();
+        c.fillStyle = txt.color;
+        c.globalAlpha = txt.alpha;
+        c.font = 'bold 12px "Geist Mono", monospace';
+        c.textAlign = "center";
+        c.fillText(txt.text, txt.x, txt.y - p.cameraY);
+        c.restore();
+      });
+
+      // 7. Draw Crane Anchor and cables (drawn at top static boundary)
       c.strokeStyle = "#1e3a24";
       c.lineWidth = 6;
       c.beginPath();
@@ -196,13 +536,12 @@ export default function GameScreen({
       c.lineTo(w, p.hookY - 30);
       c.stroke();
 
-      // Top center anchor node
       c.fillStyle = "#33ff33";
       c.beginPath();
       c.arc(w / 2, p.hookY - 30, 8, 0, Math.PI * 2);
       c.fill();
 
-      // Draw Rope to hook
+      // Cable to hook
       c.strokeStyle = "#33ff33";
       c.lineWidth = 2.5;
       c.beginPath();
@@ -210,15 +549,14 @@ export default function GameScreen({
       c.lineTo(p.hookX, p.hookY);
       c.stroke();
 
-      // Draw Metal Hook
+      // Hook anchor
       c.strokeStyle = "#33ff33";
       c.lineWidth = 4;
       c.beginPath();
       c.arc(p.hookX, p.hookY + 5, 8, -Math.PI / 4, Math.PI * 1.25);
       c.stroke();
 
-      // Draw Suspended Rope while block is attached
-      if (!p.isFalling) {
+      if (!p.isFalling && !p.isTumbling) {
         c.strokeStyle = "#33ff33";
         c.lineWidth = 1.5;
         c.beginPath();
@@ -227,56 +565,12 @@ export default function GameScreen({
         c.stroke();
       }
 
-      // Draw falling or swinging block
-      c.fillStyle = "#0e2b0e";
-      c.strokeStyle = "#33ff33";
-      c.lineWidth = 4;
-      
-      c.save();
-      c.translate(p.blockX, p.blockY);
-      
-      // Outer border box
-      c.beginPath();
-      c.rect(-p.blockW / 2, -p.blockH / 2, p.blockW, p.blockH);
-      c.fill();
-      c.stroke();
-
-      // Draw block retro pattern / grid window
-      c.fillStyle = "#33ff33";
-      c.fillRect(-18, -10, 10, 20);
-      c.fillRect(8, -10, 10, 20);
-
-      // Smiley digital windows
-      c.fillStyle = "#080b09";
-      c.fillRect(-14, -4, 2, 2);
-      c.fillRect(-8, -4, 2, 2);
-      c.fillRect(12, -4, 2, 2);
-      c.fillRect(18, -4, 2, 2);
-
-      c.restore();
-
-      // Draw static floor/mock block base
-      const baseX = w / 2;
-      const baseY = h - 60;
-
-      c.fillStyle = "#0e2b0e";
-      c.strokeStyle = "#33ff33";
-      c.lineWidth = 4;
-      c.beginPath();
-      c.rect(baseX - 50, baseY, 100, 40);
-      c.fill();
-      c.stroke();
-
-      c.fillStyle = "#33ff33";
-      c.font = 'bold 11px "Geist Mono", monospace';
-      c.textAlign = "center";
-      c.fillText("RETRO BASE", baseX, baseY + 24);
-
-      // Render overlay indicator if dropping is allowed
-      if (!p.isFalling) {
-        c.fillStyle = "rgba(51, 255, 51, 0.4)";
-        c.font = '9px "Geist Mono", monospace';
-        c.fillText("▼ READY ▼", p.blockX, p.blockY + 35);
+      // Render sway warning if sway amplitude is high
+      if (p.towerSwayAmplitude > 25) {
+        c.fillStyle = "rgba(255, 51, 51, 0.45)";
+        c.font = 'bold 9px "Geist Mono", monospace';
+        c.textAlign = "center";
+        c.fillText("⚠️ DANGER: HIGH SWAY ⚠️", w / 2, 90);
       }
     };
 
@@ -293,9 +587,9 @@ export default function GameScreen({
     if (isPaused) return;
     const p = physicsRef.current;
     
-    if (!p.isFalling) {
+    if (!p.isFalling && !p.isTumbling) {
       p.isFalling = true;
-      p.vy = 2; // Initial push downward speed
+      p.vy = 2.5; // Initial impulse
       synth.playDrop();
     }
   };
@@ -310,6 +604,7 @@ export default function GameScreen({
 
     const p = physicsRef.current;
     p.isFalling = false;
+    p.isTumbling = false;
     p.vy = 0;
     p.time = 0;
     p.scoreCount = 0;
@@ -318,6 +613,12 @@ export default function GameScreen({
     p.comboCount = 1;
     p.maxComboCount = 1;
     p.livesCount = 3;
+    p.blocks = [];
+    p.towerSwayAmplitude = 0;
+    p.cameraY = 0;
+    p.targetCameraY = 0;
+    p.particles = [];
+    p.floatingTexts = [];
   };
 
   return (
@@ -334,7 +635,7 @@ export default function GameScreen({
       />
 
       {/* Main retro cabinet/screen body wrapper */}
-      <div className="w-full max-w-md h-[85vh] relative border-4 border-retro-green bg-[#080b09] rounded-3xl overflow-hidden glow-box-green flex items-center justify-center shadow-[0_0_20px_rgba(51,255,51,0.2)]">
+      <div className="w-full max-w-md h-[80vh] relative border-4 border-retro-green bg-[#080b09] rounded-3xl overflow-hidden glow-box-green flex items-center justify-center shadow-[0_0_25px_rgba(51,255,51,0.25)]">
         
         {/* Playable Canvas */}
         <canvas
@@ -344,7 +645,7 @@ export default function GameScreen({
         />
 
         {/* Dynamic Watermark Grid Title */}
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 -z-10 text-[60px] font-black text-retro-green/[0.03] select-none tracking-widest text-center">
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 -z-10 text-[60px] font-black text-retro-green/[0.02] select-none tracking-widest text-center">
           BL0XX
         </div>
       </div>
@@ -359,7 +660,7 @@ export default function GameScreen({
           {/* Mute button */}
           <button
             onClick={handleToggleMute}
-            className="flex items-center gap-1 bg-retro-dark border border-retro-green/40 hover:border-retro-green p-1.5 rounded-lg text-retro-green transition-all cursor-pointer"
+            className="flex items-center gap-1 bg-retro-dark border border-retro-green/40 hover:border-retro-green p-1.5 rounded-lg text-retro-green transition-all cursor-pointer font-bold"
             title="Mute [M]"
           >
             {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
@@ -368,14 +669,14 @@ export default function GameScreen({
           
           <button
             onClick={onTogglePause}
-            className="bg-retro-dark border border-retro-green/40 hover:border-retro-green px-2 py-1.5 rounded-lg text-retro-green transition-all cursor-pointer"
+            className="bg-retro-dark border border-retro-green/40 hover:border-retro-green px-2 py-1.5 rounded-lg text-retro-green transition-all cursor-pointer font-bold"
           >
             {isPaused ? "RESUME" : "PAUSE"}
           </button>
           
           <button
             onClick={handleReset}
-            className="bg-retro-dark border border-retro-green/40 hover:border-retro-green px-2 py-1.5 rounded-lg text-retro-green transition-all cursor-pointer"
+            className="bg-retro-dark border border-retro-green/40 hover:border-retro-green px-2 py-1.5 rounded-lg text-retro-green transition-all cursor-pointer font-bold"
           >
             RESET
           </button>
