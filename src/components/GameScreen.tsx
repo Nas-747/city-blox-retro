@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import RetroHUD from "./RetroHUD";
 import { synth } from "@/utils/audio";
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Shield, Lock } from "lucide-react";
+import { Play, Pause, RotateCcw, Volume2, VolumeX } from "lucide-react";
 
 interface GameScreenProps {
   onGameOver: (finalScore: number, finalHeight: number, finalBlocks: number) => void;
@@ -45,8 +45,8 @@ export default function GameScreen({
     gravity: 0.5,
     swingSpeed: 0.038,
     swingAmplitude: 115,
-    canvasW: 400,
-    canvasH: 600,
+    canvasW: 400, // Rigid Virtual Width
+    canvasH: 600, // Rigid Virtual Height
     
     // Stacking physics parameters
     blocks: [] as Array<{
@@ -105,7 +105,7 @@ export default function GameScreen({
     synth.setMute(nextMute);
   };
 
-  // Keyboard controls listener
+  // Keyboard controls listener with clean unmounting to prevent memory leaks
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space") {
@@ -123,7 +123,9 @@ export default function GameScreen({
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [isPaused, onTogglePause, muted]);
 
   // Compute organic snake-like sway shift for any stack level
@@ -154,7 +156,7 @@ export default function GameScreen({
     }
   };
 
-  // Game Loop Animation
+  // Game Loop Animation & Resizing Edge Case Management
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -165,15 +167,25 @@ export default function GameScreen({
     let animId: number;
     const p = physicsRef.current;
 
+    // Handles dynamic device pixel ratio adjustments to eliminate blurriness on Retina displays
     const resizeVirtualScreen = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
+      
+      // physical buffer size
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
-      ctx.scale(dpr, dpr);
       
-      p.canvasW = rect.width;
-      p.canvasH = rect.height;
+      // Clear previous matrix scales
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      
+      // Map high-DPI coordinates onto rigid virtual 400 x 600 workspace coordinate grid
+      const scaleX = (rect.width * dpr) / 400;
+      const scaleY = (rect.height * dpr) / 600;
+      ctx.scale(scaleX, scaleY);
+      
+      p.canvasW = 400;
+      p.canvasH = 600;
     };
 
     resizeVirtualScreen();
@@ -276,11 +288,8 @@ export default function GameScreen({
 
             if (offsetDist <= 4) {
               // PERFECT DROP COMBO ACTIVE!
-              
-              // Freeze sway for the next 2 blocks
               p.swayFreezeCount = 2;
               
-              // Apply dynamic multiplier bonus based on combo
               const currentCombo = p.comboCount;
               setScore(prev => {
                 const nextScore = prev + 500 * currentCombo;
@@ -298,7 +307,7 @@ export default function GameScreen({
                 return next;
               });
 
-              // Play perfect synth chime arpeggio
+              // Play short high-pitched beep synthesized sound for perfect hit
               synth.playPerfect(p.comboCount);
 
               // Immediately silence wobbly sway energy
@@ -326,7 +335,7 @@ export default function GameScreen({
                 });
               }
             } else if (offsetDist <= 13) {
-              // GREAT DROP!
+              // GREAT DROP! Play low thud sound
               synth.playLand();
               setScore(prev => {
                 const nextScore = prev + 250;
@@ -343,7 +352,7 @@ export default function GameScreen({
                 color: "#33ff33",
               });
             } else {
-              // GOOD (Wobbly) Drop
+              // GOOD (Wobbly) Drop - Play low thud sound
               synth.playLand();
               setScore(prev => {
                 const nextScore = prev + 100;
@@ -376,7 +385,7 @@ export default function GameScreen({
             setHeight(p.blocks.length * 4.2);
 
           } else {
-            // MISSED ENTIRELY! Trigger gravity tumble
+            // MISSED ENTIRELY! Play descending sweep alarm sound
             p.isFalling = false;
             p.isTumbling = true;
             p.tumbleVx = dx * 0.12; // drift away in direction of error
@@ -411,12 +420,12 @@ export default function GameScreen({
           setCombo(1);
 
           if (nextLives <= 0) {
-            // Stop loop and record high scores
+            // Cancel requestAnimationFrame and update high scores
             cancelAnimationFrame(animId);
             synth.playGameOver();
             saveHighScoreIfNeeded(p.scoreCount);
             onGameOver(p.scoreCount, p.heightCount, p.blocksPlacedCount);
-            return; // stop execution of frame
+            return;
           }
         }
       } else {
