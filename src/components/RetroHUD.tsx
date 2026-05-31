@@ -14,6 +14,7 @@ interface RetroHUDProps {
   laserCharges: number;
   swayLockCharges: number;
   isPanic: boolean;
+  showWind: boolean; // Flag to hide wind indicator on EASY mode
 }
 
 export default function RetroHUD({
@@ -27,6 +28,7 @@ export default function RetroHUD({
   laserCharges = 0,
   swayLockCharges = 0,
   isPanic = false,
+  showWind = true,
 }: RetroHUDProps) {
   // Pad score with zeros for retro look (e.g., 001,240)
   const formatScore = (num: number) => {
@@ -102,15 +104,19 @@ export default function RetroHUD({
 
       {/* Middle HUD Row: Wind Indicator and Power-up Buff Monitors */}
       <div className="flex justify-between items-center w-full px-1">
-        {/* Left Indicator: Real-time Color-Coded Crosswind */}
-        <div className={`flex items-center gap-1.5 border px-2.5 py-1 rounded-lg font-bold text-[9px] uppercase pointer-events-auto ${getWindColor(wind)}`}>
-          <Wind className="w-3 h-3 animate-pulse" />
-          <span>
-            {wind === 0 
-              ? "WIND: CALM" 
-              : `WIND: ${wind > 0 ? "RIGHT" : "LEFT"} ${(Math.abs(wind) * 10).toFixed(0)} KT`}
-          </span>
-        </div>
+        {/* Left Indicator: Real-time Color-Coded Crosswind (hidden on EASY mode) */}
+        {showWind ? (
+          <div className={`flex items-center gap-1.5 border px-2.5 py-1 rounded-lg font-bold text-[9px] uppercase pointer-events-auto ${getWindColor(wind)}`}>
+            <Wind className="w-3 h-3 animate-pulse" />
+            <span>
+              {wind === 0 
+                ? "WIND: CALM" 
+                : `WIND: ${wind > 0 ? "RIGHT" : "LEFT"} ${(Math.abs(wind) * 10).toFixed(0)} KT`}
+            </span>
+          </div>
+        ) : (
+          <div /> // empty placeholder to keep alignments of powerup indicators
+        )}
 
         {/* Right Indicators: Active Helper Power-ups Charge Buffs */}
         <div className="flex items-center gap-1.5 pointer-events-auto">

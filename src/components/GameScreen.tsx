@@ -167,14 +167,18 @@ export default function GameScreen({
   const spawnNewBlock = () => {
     const p = physicsRef.current;
     
-    // Spawning Types logic
-    const r = Math.random();
-    if (r < 0.8) {
+    // Spawning Types logic (EASY spawns 100% NORMAL, MID/CHALLENGING has GOLD/GLASS chances)
+    if (difficulty.name === "EASY") {
       p.currentBlockType = "NORMAL";
-    } else if (r < 0.9) {
-      p.currentBlockType = "GOLD";
     } else {
-      p.currentBlockType = "GLASS";
+      const r = Math.random();
+      if (r < 0.8) {
+        p.currentBlockType = "NORMAL";
+      } else if (r < 0.9) {
+        p.currentBlockType = "GOLD";
+      } else {
+        p.currentBlockType = "GLASS";
+      }
     }
 
     // Dynamic wind generation derived from maxWind configuration
@@ -919,6 +923,84 @@ export default function GameScreen({
 
       // Restore screen-shake context translation matrix
       c.restore();
+
+      // 8. Render warning alerts
+      if (isPanic) {
+        c.fillStyle = "#ff3333";
+        c.font = 'bold 10px "Geist Mono", monospace';
+        c.textAlign = "center";
+        c.fillText("⚠️ TOUGHER CONDITIONS: TOUPLE PANIC ACTIVE! ⚠️", w / 2, 90);
+        c.font = '8px "Geist Mono", monospace';
+        c.fillStyle = "rgba(255, 51, 51, 0.75)";
+        c.fillText("LAND 2 PERFECTS IN A ROW TO STABILIZE BUILDING!", w / 2, 102);
+      } else if (p.towerSwayAmplitude > 25 && p.swayFreezeCount === 0) {
+        c.fillStyle = "rgba(255, 51, 51, 0.45)";
+        c.font = 'bold 9px "Geist Mono", monospace';
+        c.textAlign = "center";
+        c.fillText("⚠️ WARNING: TOWER SWAYING ⚠️", w / 2, 90);
+      }
+
+      // 9. DRAW SWAY LOCK COMBO INDICATOR
+      if (p.swayFreezeCount > 0) {
+        c.save();
+        c.fillStyle = "rgba(51, 255, 51, 0.9)";
+        c.strokeStyle = "#33ff33";
+        c.lineWidth = 1.5;
+        c.font = 'bold 8px "Geist Mono", monospace';
+        
+        c.beginPath();
+        c.rect(w - 95, 115, 85, 20);
+        c.fillStyle = "#041404";
+        c.fill();
+        c.stroke();
+        
+        c.fillStyle = "#33ff33";
+        c.fillText(`🔒 SWAY LOCK: ${p.swayFreezeCount}`, w - 52, 128);
+        c.restore();
+      }
+
+      // 10. DRAW LASER POWER-UP INDICATOR HUD CHARGES
+      if (p.laserGuideCount > 0) {
+        c.save();
+        c.fillStyle = "rgba(51, 255, 255, 0.9)";
+        c.strokeStyle = "#33ffff";
+        c.lineWidth = 1.5;
+        c.font = 'bold 8px "Geist Mono", monospace';
+        
+        c.beginPath();
+        c.rect(w - 95, 140, 85, 20);
+        c.fillStyle = "#041414";
+        c.fill();
+        c.stroke();
+        
+        c.fillStyle = "#33ffff";
+        c.fillText(`⚡ LASER: x${p.laserGuideCount}`, w - 52, 153);
+        c.restore();
+      }
+
+      // 11. DRAW CROSSWIND RETRO GAUGE INDICATOR (only if wind is active!)
+      if (difficulty.maxWind > 0) {
+        c.save();
+        c.strokeStyle = "#33ff33";
+        c.lineWidth = 1.5;
+        c.font = 'bold 8px "Geist Mono", monospace';
+        
+        c.beginPath();
+        c.rect(10, 115, 105, 20);
+        c.fillStyle = "#041404";
+        c.fill();
+        c.stroke();
+
+        c.fillStyle = "#33ff33";
+        c.textAlign = "left";
+        
+        const windLabel = p.wind === 0 
+          ? "WIND: CALM" 
+          : `WIND: ${p.wind > 0 ? ">>>" : "<<<"} ${Math.abs(p.wind * 10).toFixed(0)} KT`;
+        
+        c.fillText(windLabel, 16, 128);
+        c.restore();
+      }
     };
 
     animId = requestAnimationFrame(tick);
@@ -998,6 +1080,7 @@ export default function GameScreen({
         laserCharges={laserCharges}
         swayLockCharges={swayLockCharges}
         isPanic={isPanicState}
+        showWind={difficulty.maxWind > 0}
       />
 
       {/* Main retro cabinet/screen body wrapper */}
