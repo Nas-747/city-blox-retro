@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import RetroHUD from "./RetroHUD";
 import { synth } from "@/utils/audio";
-import { Play, Pause, RotateCcw, Volume2, VolumeX, ShieldAlert } from "lucide-react";
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Shield, Lock } from "lucide-react";
 
 interface GameScreenProps {
   onGameOver: (finalScore: number, finalHeight: number, finalBlocks: number) => void;
@@ -61,7 +61,8 @@ export default function GameScreen({
     swaySpeed: 0.022,       // Speed of wave oscillation
     cameraY: 0,             // Current scroll position
     targetCameraY: 0,       // Destination scroll position for smooth lerp
-    
+    swayFreezeCount: 0,     // Sway Freeze combo block count
+
     // Interactive feedback overlays
     particles: [] as Array<{
       x: number;
@@ -130,6 +131,9 @@ export default function GameScreen({
     const p = physicsRef.current;
     if (p.blocks.length === 0) return 0;
     
+    // IF SWAY IS FROZEN via combo, return 0 (sway is locked solid!)
+    if (p.swayFreezeCount > 0) return 0;
+    
     // Multiplier increases as we ascend the skyscraper (base remains rigid)
     const ratio = (index + 1) / (p.blocks.length + 1);
     const maxSway = p.towerSwayAmplitude * ratio;
@@ -137,6 +141,17 @@ export default function GameScreen({
     // Wave phase shift with index creates flexible fluid motion
     const wavePhase = time * p.swaySpeed - index * 0.22;
     return maxSway * Math.sin(wavePhase);
+  };
+
+  // Check and save local high score
+  const saveHighScoreIfNeeded = (finalScore: number) => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("city_blox_highscore");
+      const currentHigh = saved ? parseInt(saved, 10) : 0;
+      if (finalScore > currentHigh) {
+        localStorage.setItem("city_blox_highscore", finalScore.toString());
+      }
+    }
   };
 
   // Game Loop Animation
@@ -190,7 +205,7 @@ export default function GameScreen({
       p.cameraY += (p.targetCameraY - p.cameraY) * 0.08;
 
       // 3. Update particle dynamics
-      p.particles.forEach((part, idx) => {
+      p.particles.forEach((part) => {
         part.x += part.vx;
         part.y += part.vy;
         part.alpha -= 0.025;
@@ -253,13 +268,29 @@ export default function GameScreen({
 
             // Alignment metrics feedback
             const offsetDist = Math.abs(dx);
-            if (offsetDist <= 5) {
-              // PERFECT DROP!
-              synth.playPerfect(p.comboCount);
-              const comboBonus = p.comboCount;
-              setScore(prev => prev + 500 * comboBonus);
+            
+            // Decement sway freeze counter if sway locking was active
+            if (p.swayFreezeCount > 0) {
+              p.swayFreezeCount -= 1;
+            }
+
+            if (offsetDist <= 4) {
+              // PERFECT DROP COMBO ACTIVE!
+              
+              // Freeze sway for the next 2 blocks
+              p.swayFreezeCount = 2;
+              
+              // Apply dynamic multiplier bonus based on combo
+              const currentCombo = p.comboCount;
+              setScore(prev => {
+                const nextScore = prev + 500 * currentCombo;
+                p.scoreCount = nextScore;
+                return nextScore;
+              });
+
               setCombo(prev => {
                 const next = prev + 1;
+                p.comboCount = next;
                 if (next > p.maxComboCount) {
                   p.maxComboCount = next;
                   setMaxCombo(next);
@@ -267,14 +298,17 @@ export default function GameScreen({
                 return next;
               });
 
-              // Calm the skyscraper wobbling as reward
-              p.towerSwayAmplitude = Math.max(0, p.towerSwayAmplitude - 5);
+              // Play perfect synth chime arpeggio
+              synth.playPerfect(p.comboCount);
+
+              // Immediately silence wobbly sway energy
+              p.towerSwayAmplitude = 0;
 
               // Trigger Floating text banner
               p.floatingTexts.push({
                 x: p.blockX,
                 y: p.blockY - 20,
-                text: "★ PERFECT ★",
+                text: `★ PERFECT x${currentCombo} ★`,
                 alpha: 1.0,
                 color: "#33ff33",
               });
@@ -294,7 +328,11 @@ export default function GameScreen({
             } else if (offsetDist <= 13) {
               // GREAT DROP!
               synth.playLand();
-              setScore(prev => prev + 250);
+              setScore(prev => {
+                const nextScore = prev + 250;
+                p.scoreCount = nextScore;
+                return nextScore;
+              });
               setCombo(1);
 
               p.floatingTexts.push({
@@ -307,11 +345,17 @@ export default function GameScreen({
             } else {
               // GOOD (Wobbly) Drop
               synth.playLand();
-              setScore(prev => prev + 100);
+              setScore(prev => {
+                const nextScore = prev + 100;
+                p.scoreCount = nextScore;
+                return nextScore;
+              });
               setCombo(1);
 
-              // Accumulate tower offset sway energy
-              p.towerSwayAmplitude = Math.min(75, p.towerSwayAmplitude + offsetDist * 0.55);
+              // Accumulate tower offset sway energy (only if sway is not currently frozen!)
+              if (p.swayFreezeCount === 0) {
+                p.towerSwayAmplitude = Math.min(75, p.towerSwayAmplitude + offsetDist * 0.55);
+              }
 
               p.floatingTexts.push({
                 x: p.blockX,
@@ -362,12 +406,17 @@ export default function GameScreen({
           p.vy = 0;
 
           const nextLives = p.livesCount - 1;
+          p.livesCount = nextLives;
           setLives(nextLives);
           setCombo(1);
 
           if (nextLives <= 0) {
+            // Stop loop and record high scores
+            cancelAnimationFrame(animId);
             synth.playGameOver();
+            saveHighScoreIfNeeded(p.scoreCount);
             onGameOver(p.scoreCount, p.heightCount, p.blocksPlacedCount);
+            return; // stop execution of frame
           }
         }
       } else {
@@ -390,7 +439,6 @@ export default function GameScreen({
       c.lineWidth = 1;
       const gridW = 32;
       
-      // Calculate layout shift offset based on camera position
       const scrollShift = p.cameraY % gridW;
       for (let x = 0; x < w; x += gridW) {
         c.beginPath();
@@ -471,7 +519,6 @@ export default function GameScreen({
       // 5. Draw active falling/tumbling/carrying block
       if (p.isFalling || (!p.isFalling && !p.isTumbling)) {
         c.save();
-        // Dynamic camera adjustment does NOT apply to crane elements!
         c.translate(p.blockX, p.blockY);
 
         c.fillStyle = "#0e2b0e";
@@ -565,12 +612,32 @@ export default function GameScreen({
         c.stroke();
       }
 
-      // Render sway warning if sway amplitude is high
-      if (p.towerSwayAmplitude > 25) {
+      // 8. Render sway warning if sway amplitude is high
+      if (p.towerSwayAmplitude > 25 && p.swayFreezeCount === 0) {
         c.fillStyle = "rgba(255, 51, 51, 0.45)";
         c.font = 'bold 9px "Geist Mono", monospace';
         c.textAlign = "center";
-        c.fillText("⚠️ DANGER: HIGH SWAY ⚠️", w / 2, 90);
+        c.fillText("⚠️ DANGER: TOWER SWAYING ⚠️", w / 2, 90);
+      }
+
+      // 9. DRAW SWAY LOCK COMBO INDICATOR (Sway Frozen overlay)
+      if (p.swayFreezeCount > 0) {
+        c.save();
+        c.fillStyle = "rgba(51, 255, 51, 0.9)";
+        c.strokeStyle = "#33ff33";
+        c.lineWidth = 1.5;
+        c.font = 'bold 8px "Geist Mono", monospace';
+        
+        // Draw small lock status box on top right
+        c.beginPath();
+        c.rect(w - 95, 85, 85, 20);
+        c.fillStyle = "#041404";
+        c.fill();
+        c.stroke();
+        
+        c.fillStyle = "#33ff33";
+        c.fillText(`🔒 SWAY LOCK: ${p.swayFreezeCount}`, w - 52, 98);
+        c.restore();
       }
     };
 
@@ -617,6 +684,7 @@ export default function GameScreen({
     p.towerSwayAmplitude = 0;
     p.cameraY = 0;
     p.targetCameraY = 0;
+    p.swayFreezeCount = 0;
     p.particles = [];
     p.floatingTexts = [];
   };

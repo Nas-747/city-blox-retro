@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import GameScreen from "@/components/GameScreen";
-import { Play, Volume2, VolumeX, Shield, Award, RotateCcw, Home, Sparkles, Building2 } from "lucide-react";
+import { Play, Volume2, VolumeX, Shield, Award, RotateCcw, Home, Building2 } from "lucide-react";
 
 type GameState = "START" | "PLAYING" | "GAMEOVER";
 
@@ -10,6 +10,7 @@ export default function Page() {
   const [gameState, setGameState] = useState<GameState>("START");
   const [isPaused, setIsPaused] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [personalBest, setPersonalBest] = useState(0);
   
   // Game stats for Game Over modal
   const [stats, setStats] = useState({
@@ -18,13 +19,30 @@ export default function Page() {
     blocks: 0,
   });
 
-  // Mock leaderboard
-  const leaderboard = [
-    { rank: 1, name: "BL0XX_K1NG", score: 28400, height: 184.5 },
-    { rank: 2, name: "N0K1A_8810", score: 19550, height: 132.8 },
-    { rank: 3, name: "BRIGHT_ICT", score: 14200, height: 96.6 },
-    { rank: 4, name: "CANVAS_DEV", score: 9800, height: 64.2 },
-  ];
+  // Load high score on client mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("city_blox_highscore");
+      if (saved) {
+        setPersonalBest(parseInt(saved, 10));
+      }
+    }
+  }, [gameState]);
+
+  // Leaders list including active user score
+  const getLeaderboard = () => {
+    const list = [
+      { rank: 1, name: "BL0XX_K1NG", score: 28400, height: 184.5 },
+      { rank: 2, name: "N0K1A_8810", score: 19550, height: 132.8 },
+      { rank: 3, name: "YOU (BEST)", score: personalBest, height: (personalBest / 100) * 1.5 },
+      { rank: 4, name: "BRIGHT_ICT", score: 14200, height: 96.6 },
+    ];
+    // Sort descending by score
+    return list.sort((a, b) => b.score - a.score).map((item, idx) => ({
+      ...item,
+      rank: idx + 1,
+    }));
+  };
 
   const handleStartGame = () => {
     setGameState("PLAYING");
@@ -58,21 +76,20 @@ export default function Page() {
       
       {/* 1. START / TITLE SCREEN */}
       {gameState === "START" && (
-        <div className="flex flex-col items-center justify-center gap-8 w-full max-w-lg px-6 text-center animate-fade-in font-mono z-10">
-          {/* Neon Header Container */}
-          <div className="retro-border bg-[#080b09] p-8 w-full flex flex-col items-center gap-4 rounded-3xl glow-box-green relative overflow-hidden">
-            
-            {/* Retro pulsing grid highlights */}
+        <div className="flex flex-col items-center justify-center gap-6 w-full max-w-lg px-6 text-center animate-fade-in font-mono z-10">
+          
+          {/* Neon Header Box */}
+          <div className="retro-border bg-[#080b09] p-6 w-full flex flex-col items-center gap-3 rounded-3xl glow-box-green relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-retro-green animate-pulse" />
 
-            <div className="flex items-center justify-center gap-2 mb-2">
+            <div className="flex items-center justify-center gap-2">
               <Building2 className="w-8 h-8 text-retro-green animate-bounce" />
-              <div className="text-[10px] text-retro-green bg-retro-dark border border-retro-green px-2 py-0.5 rounded uppercase tracking-wider font-bold">
-                System Active
+              <div className="text-[9px] text-retro-green bg-retro-dark border border-retro-green px-2 py-0.5 rounded uppercase tracking-wider font-bold">
+                Cabinet Online
               </div>
             </div>
 
-            {/* Giant Title */}
+            {/* Title */}
             <h1 className="text-4xl md:text-5xl font-black text-retro-green tracking-tighter leading-none glow-green uppercase">
               CITY BLOX
               <span className="block text-2xl tracking-widest mt-1 text-[#f8f9fa] opacity-90">
@@ -80,61 +97,71 @@ export default function Page() {
               </span>
             </h1>
 
-            <p className="text-xs uppercase text-retro-green/75 tracking-wider mt-2 font-bold">
+            <p className="text-[10px] uppercase text-retro-green/75 tracking-wider font-bold">
               THE NOSTALGIC TOWER BUILDER
             </p>
 
-            {/* Sound Toggle HUD */}
-            <div className="flex gap-4 mt-2">
+            {/* Audio Toggle button */}
+            <div className="flex gap-4">
               <button 
                 onClick={() => setIsMuted(!isMuted)} 
-                className="flex items-center gap-1.5 text-[10px] border border-retro-green/30 hover:border-retro-green/80 text-retro-green px-3 py-1.5 rounded-lg transition-all"
+                className="flex items-center gap-1.5 text-[9px] border border-retro-green/30 hover:border-retro-green/80 text-retro-green px-3 py-1 rounded-lg transition-all cursor-pointer"
               >
-                {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                <span>SOUND: {isMuted ? "MUTED" : "ON"}</span>
+                {isMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                <span>SOUNDS: {isMuted ? "MUTED" : "ON"}</span>
               </button>
             </div>
           </div>
 
-          {/* Action Panel */}
-          <div className="w-full flex flex-col gap-3">
+          {/* Start button */}
+          <div className="w-full">
             <button
               onClick={handleStartGame}
-              className="retro-btn text-lg py-4 w-full flex items-center justify-center gap-2 tracking-widest uppercase font-black"
+              className="retro-btn text-base py-3 w-full flex items-center justify-center gap-2 tracking-widest uppercase font-black"
             >
-              <Play className="w-5 h-5 fill-current" />
+              <Play className="w-4 h-4 fill-current" />
               INSERT COIN & START
             </button>
           </div>
 
-          {/* Retro Leaderboard High Scores */}
-          <div className="w-full bg-[#080b09]/80 border-2 border-retro-green/40 p-5 rounded-2xl glow-box-green flex flex-col gap-3">
-            <div className="flex justify-between items-center border-b border-retro-green/20 pb-2">
-              <span className="text-xs text-retro-green font-bold flex items-center gap-1">
-                <Award className="w-4 h-4" /> LEADERBOARD (ALL-TIME)
+          {/* High Score Leaderboard */}
+          <div className="w-full bg-[#080b09]/80 border-2 border-retro-green/40 p-4 rounded-2xl glow-box-green flex flex-col gap-2.5">
+            <div className="flex justify-between items-center border-b border-retro-green/20 pb-1.5">
+              <span className="text-[10px] text-retro-green font-bold flex items-center gap-1">
+                <Award className="w-3.5 h-3.5" /> LEADERBOARD (ARCADE HIGH)
               </span>
-              <span className="text-[9px] text-retro-green/50">V1.0</span>
+              {personalBest > 0 && (
+                <span className="text-[8px] text-retro-green/60 uppercase">
+                  PB: {personalBest.toLocaleString()}
+                </span>
+              )}
             </div>
             
-            <div className="flex flex-col gap-2 text-xs text-left">
-              {leaderboard.map((item) => (
-                <div key={item.rank} className="flex justify-between items-center text-retro-green/80 font-bold uppercase">
+            <div className="flex flex-col gap-1.5 text-xs text-left">
+              {getLeaderboard().map((item) => (
+                <div 
+                  key={item.name} 
+                  className={`flex justify-between items-center font-bold uppercase ${
+                    item.name.includes("YOU") ? "text-retro-green glow-green" : "text-retro-green/60"
+                  }`}
+                >
                   <span>
                     {item.rank}. {item.name}
                   </span>
                   <div className="flex gap-4">
-                    <span>{item.height}m</span>
-                    <span className="text-retro-green glow-green font-mono">{item.score.toLocaleString()}</span>
+                    <span>{item.height > 0 ? `${item.height.toFixed(1)}m` : "---"}</span>
+                    <span className="font-mono">{item.score.toLocaleString()}</span>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Footer Controls Instruction */}
-          <div className="text-[10px] text-retro-green/50 uppercase tracking-widest leading-relaxed">
+          {/* Instruction Footnote */}
+          <div className="text-[9px] text-retro-green/40 uppercase tracking-widest leading-relaxed">
             CRANE SWINGS AUTOMATICALLY.<br />
-            PRESS SPACE OR TAP SCREEN TO RELEASE AND STACK BLOCKS.
+            PRESS SPACE OR CLICK CANVAS TO STACK ROOM BLOCKS.<br />
+            PERFECT PLACEMENT LOCKS THE SWAY FOR EXTREME HEIGHT COMBOS!
           </div>
         </div>
       )}
@@ -153,56 +180,64 @@ export default function Page() {
       {/* 3. GAME OVER MODAL SCREEN */}
       {gameState === "GAMEOVER" && (
         <div className="absolute inset-0 bg-[#080b09]/90 backdrop-blur-md z-50 flex items-center justify-center font-mono">
-          <div className="retro-border bg-[#080b09] p-8 max-w-md w-[90%] flex flex-col gap-6 rounded-3xl glow-box-green text-center">
+          <div className="retro-border bg-[#080b09] p-8 max-w-sm w-[90%] flex flex-col gap-5 rounded-3xl glow-box-green text-center">
             
-            <div className="flex flex-col items-center gap-2">
-              <div className="bg-red-950 text-red-500 border border-red-500 px-3 py-1 rounded text-xs font-black uppercase tracking-widest animate-pulse">
-                Game Over
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="bg-red-950 text-red-500 border border-red-500 px-3 py-0.5 rounded text-[10px] font-black uppercase tracking-widest animate-pulse">
+                Skyscraper Collapsed
               </div>
-              <h2 className="text-4xl font-black text-retro-green tracking-tight leading-none glow-green mt-2">
-                TOWER CRASHED
+              <h2 className="text-3xl font-black text-retro-green tracking-tight leading-none glow-green mt-1">
+                TOWER CRASH
               </h2>
             </div>
 
             {/* Score Grid & Performance Stats */}
-            <div className="border-2 border-retro-green/45 bg-retro-dark/30 rounded-2xl p-4 flex flex-col gap-3.5">
-              <div className="flex justify-between items-center text-sm font-bold border-b border-retro-green/20 pb-2">
-                <span className="text-retro-green/70 uppercase">FINAL SCORE</span>
-                <span className="text-xl text-retro-green glow-green">{stats.score.toLocaleString()}</span>
+            <div className="border-2 border-retro-green/45 bg-retro-dark/30 rounded-2xl p-4 flex flex-col gap-3">
+              <div className="flex justify-between items-center text-xs font-bold border-b border-retro-green/20 pb-2">
+                <span className="text-retro-green/70 uppercase">SCORE</span>
+                <span className="text-lg text-retro-green glow-green">{stats.score.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between items-center text-xs font-bold">
-                <span className="text-retro-green/70 uppercase">PEAK HEIGHT</span>
+              
+              {stats.score >= personalBest && stats.score > 0 && (
+                <div className="text-[9px] text-[#080b09] bg-retro-green px-2 py-0.5 rounded-md font-bold text-center uppercase tracking-widest">
+                  ★ NEW PERSONAL RECORD ★
+                </div>
+              )}
+
+              <div className="flex justify-between items-center text-[10px] font-bold">
+                <span className="text-retro-green/70 uppercase">HEIGHT</span>
                 <span className="text-retro-green font-mono">{stats.height.toFixed(1)}m</span>
               </div>
-              <div className="flex justify-between items-center text-xs font-bold">
-                <span className="text-retro-green/70 uppercase">BLOCKS PLACED</span>
+              <div className="flex justify-between items-center text-[10px] font-bold">
+                <span className="text-retro-green/70 uppercase">BLOCKS</span>
                 <span className="text-retro-green font-mono">{stats.blocks}</span>
               </div>
             </div>
 
-            {/* Fun Retro Evaluation Comments */}
-            <div className="text-xs uppercase text-retro-green/80 border border-retro-green/20 p-3 rounded-lg leading-relaxed bg-[#080b09]">
-              {stats.height > 100 
-                ? "🏆 INCREDIBLE ARCHITECTURE! A sky-scraping masterpiece!"
-                : stats.height > 40
-                ? "⭐ GREAT JOB! You built a respectable city apartment!"
-                : "🧱 Gravity wins this round! Try aligning your drops more center!"}
+            {/* Comical Feedback Dialogue */}
+            <div className="text-[10px] uppercase text-retro-green/80 border border-retro-green/20 p-2.5 rounded-lg leading-relaxed bg-[#080b09]">
+              {stats.height > 120 
+                ? "🏆 MASSIVE ARCHITECTURE! City planning officials are stunned!"
+                : stats.height > 50
+                ? "⭐ FINE WORK! You stacked up a cozy residential block!"
+                : "🧱 Gravity claims the bricks. Align your timing to stabilize!"}
             </div>
 
             {/* Action buttons */}
-            <div className="flex flex-col sm:flex-row gap-3 mt-2">
+            <div className="flex flex-col gap-2 mt-1">
               <button
                 onClick={handleRestart}
-                className="retro-btn flex-1 flex items-center justify-center gap-2 text-sm"
+                className="retro-btn text-xs w-full py-2.5 flex items-center justify-center gap-1.5"
               >
-                <RotateCcw className="w-4 h-4" />
+                <RotateCcw className="w-3.5 h-3.5" />
                 PLAY AGAIN
               </button>
+              
               <button
                 onClick={handleBackToTitle}
-                className="border-2 border-retro-green/60 hover:bg-retro-green hover:text-[#080b09] text-retro-green py-3 px-4 rounded-xl text-sm transition-all flex items-center justify-center gap-2 font-bold"
+                className="border-2 border-retro-green/50 hover:bg-retro-green hover:text-[#080b09] text-retro-green py-2 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 font-bold cursor-pointer"
               >
-                <Home className="w-4 h-4" />
+                <Home className="w-3.5 h-3.5" />
                 MAIN TITLE
               </button>
             </div>
