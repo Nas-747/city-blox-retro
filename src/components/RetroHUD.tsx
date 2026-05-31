@@ -46,7 +46,7 @@ export default function RetroHUD({
   };
 
   return (
-    <div className="absolute top-0 left-0 w-full p-3 md:p-5 pointer-events-none z-10 flex flex-col gap-3 font-mono">
+    <div className="absolute top-0 left-0 w-full h-full p-3 md:p-5 pointer-events-none z-10 flex flex-col gap-3 font-mono">
       {/* Top HUD Row */}
       <div className="flex justify-between items-start w-full">
         {/* Left Side: Score & Streak Combo Alerts */}
@@ -156,6 +156,14 @@ export default function RetroHUD({
               ⚠️ TOUPLE PANIC! BUILDINGS INSTABILITY EXTREME ⚠️
             </span>
           </div>
+        </div>
+      )}
+
+      {/* FULL SCREEN RED WARNING PANIC OVERLAY VIGNETTE */}
+      {isPanic && (
+        <div className="absolute inset-0 pointer-events-none border-6 border-red-600 animate-pulse shadow-[inset_0_0_80px_rgba(239,68,68,0.65)] z-0 rounded-3xl overflow-hidden">
+          {/* Subtle warning diagonal stripes scrolling along the edges */}
+          <div className="absolute inset-0 opacity-[0.07] bg-[repeating-linear-gradient(45deg,#ef4444,#ef4444_12px,#000_12px,#000_24px)] pointer-events-none" />
         </div>
       )}
     </div>

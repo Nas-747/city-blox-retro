@@ -133,6 +133,13 @@ export default function GameScreen({
     handleReset();
   }, [difficulty]);
 
+  // Dedicated component unmount cleanup for the audio synthesizer context
+  useEffect(() => {
+    return () => {
+      synth.cleanup();
+    };
+  }, []);
+
   // Synchronize mute setting with sound synthesizer instance
   const handleToggleMute = () => {
     const nextMute = !muted;
@@ -1025,6 +1032,9 @@ export default function GameScreen({
   };
 
   const handleReset = () => {
+    if (isPaused) {
+      onTogglePause();
+    }
     setScore(0);
     setCombo(1);
     setLives(3);
