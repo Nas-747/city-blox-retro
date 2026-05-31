@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import GameScreen from "@/components/GameScreen";
+import { synth } from "@/utils/audio";
 import { Play, Volume2, VolumeX, Shield, Award, RotateCcw, Home, Building2, Flame, Activity } from "lucide-react";
 
 export type GameState = "START" | "DIFFICULTY" | "PLAYING" | "GAMEOVER";
@@ -93,6 +94,7 @@ export default function Page() {
     }
     
     setSelectedDifficulty(config);
+    synth.playDifficultySelect();
     setGameState("PLAYING");
     setIsPaused(false);
   };
@@ -152,7 +154,11 @@ export default function Page() {
             {/* Audio Toggle button */}
             <div className="flex gap-4">
               <button 
-                onClick={() => setIsMuted(!isMuted)} 
+                onClick={() => {
+                  const next = !isMuted;
+                  setIsMuted(next);
+                  synth.setMute(next);
+                }} 
                 className="flex items-center gap-1.5 text-[9px] border border-retro-green/30 hover:border-retro-green/80 text-retro-green px-3 py-1 rounded-lg transition-all cursor-pointer"
               >
                 {isMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}

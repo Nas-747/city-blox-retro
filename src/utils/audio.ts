@@ -176,6 +176,34 @@ class RetroSynth {
     });
   }
 
+  // Play a distinct, high-pitched ascending chord sequence on difficulty select
+  playDifficultySelect() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98]; // C5, E5, G5, C6, E6, G6
+    const step = 0.06;
+
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, this.ctx!.currentTime + idx * step);
+
+      gain.gain.setValueAtTime(0, this.ctx!.currentTime + idx * step);
+      gain.gain.linearRampToValueAtTime(0.05, this.ctx!.currentTime + idx * step + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx!.currentTime + idx * step + 0.16);
+
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+
+      osc.start(this.ctx!.currentTime + idx * step);
+      osc.stop(this.ctx!.currentTime + idx * step + 0.2);
+    });
+  }
+
   // 2. Continuous low-frequency pulsating rumble oscillation sound during Panic
   startRumble() {
     if (this.muted) return;

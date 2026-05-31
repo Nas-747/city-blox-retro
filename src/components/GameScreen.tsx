@@ -1081,6 +1081,7 @@ export default function GameScreen({
         swayLockCharges={swayLockCharges}
         isPanic={isPanicState}
         showWind={difficulty.maxWind > 0}
+        difficultyName={difficulty.name}
       />
 
       {/* Main retro cabinet/screen body wrapper */}

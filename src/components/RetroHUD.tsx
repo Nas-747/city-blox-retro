@@ -15,6 +15,7 @@ interface RetroHUDProps {
   swayLockCharges: number;
   isPanic: boolean;
   showWind: boolean; // Flag to hide wind indicator on EASY mode
+  difficultyName: string; // The active difficulty tier name
 }
 
 export default function RetroHUD({
@@ -29,6 +30,7 @@ export default function RetroHUD({
   swayLockCharges = 0,
   isPanic = false,
   showWind = true,
+  difficultyName = "MID",
 }: RetroHUDProps) {
   // Pad score with zeros for retro look (e.g., 001,240)
   const formatScore = (num: number) => {
@@ -50,7 +52,18 @@ export default function RetroHUD({
         {/* Left Side: Score & Streak Combo Alerts */}
         <div className="flex flex-col gap-2 pointer-events-auto">
           <div className="bg-[#080b09]/95 border-2 border-retro-green rounded-xl p-2.5 glow-box-green flex flex-col">
-            <span className="text-[9px] uppercase text-retro-green/70 tracking-widest font-black">Score</span>
+            <div className="flex justify-between items-center gap-4 mb-0.5">
+              <span className="text-[9px] uppercase text-retro-green/70 tracking-widest font-black">Score</span>
+              <span className={`text-[7px] border px-1 rounded font-black tracking-widest leading-none py-0.5 ${
+                difficultyName === "EASY" 
+                  ? "border-green-500 text-green-400 bg-green-950/20" 
+                  : difficultyName === "CHALLENGING"
+                  ? "border-red-500 text-red-400 bg-red-950/20 animate-pulse"
+                  : "border-yellow-500 text-yellow-400 bg-yellow-950/20"
+              }`}>
+                {difficultyName}
+              </span>
+            </div>
             <span className="text-lg md:text-xl font-black text-retro-green glow-green tracking-wider font-mono">
               {formatScore(score)}
             </span>
