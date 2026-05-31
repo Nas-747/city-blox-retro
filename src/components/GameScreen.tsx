@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import RetroHUD from "./RetroHUD";
 import { synth } from "@/utils/audio";
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Shield, Lock, Wind } from "lucide-react";
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Shield, Lock } from "lucide-react";
 
 interface GameScreenProps {
   onGameOver: (finalScore: number, finalHeight: number, finalBlocks: number) => void;
@@ -28,7 +28,7 @@ export default function GameScreen({
   const [blocksCount, setBlocksCount] = useState(0);
   const [maxCombo, setMaxCombo] = useState(1);
   const [muted, setMuted] = useState(false);
-  const [activeWind, setActiveWind] = useState(0); // Wind state variable in React for general HUD awareness
+  const [activeWind, setActiveWind] = useState(0);
 
   // High performance game variables kept in refs to bypass React state latency in physics loops
   const physicsRef = useRef({
@@ -48,6 +48,7 @@ export default function GameScreen({
     gravity: 0.5,
     swingSpeed: 0.038,
     swingAmplitude: 115,
+    swingPhase: 0,          // Phase accumulator to prevent speed transition jumps
     canvasW: 400, // Rigid Virtual Width
     canvasH: 600, // Rigid Virtual Height
     
@@ -61,11 +62,12 @@ export default function GameScreen({
       label: string;
       type: BlockType;
     }>,
-    towerSwayAmplitude: 0, // Maximum swing width multiplier
+    towerSwayAmplitude: 0, // Maximum swing width multiplier (used as swayIntensity)
     swaySpeed: 0.022,       // Speed of wave oscillation
     cameraY: 0,             // Current scroll position
     targetCameraY: 0,       // Destination scroll position for smooth lerp
     swayFreezeCount: 0,     // Sway Freeze combo block count
+    perfectStreak: 0,       // Consecutively placed perfect drops streak
 
     // Crosswinds & Block Types parameters
     wind: 0,                // Floating number from -1.5 to 1.5
@@ -140,7 +142,7 @@ export default function GameScreen({
   const spawnNewBlock = () => {
     const p = physicsRef.current;
     
-    // 1. Spawning Types logic (80% Normal, 10% Gold, 10% Glass)
+    // Spawning Types logic (80% Normal, 10% Gold, 10% Glass)
     const r = Math.random();
     if (r < 0.8) {
       p.currentBlockType = "NORMAL";
@@ -150,7 +152,7 @@ export default function GameScreen({
       p.currentBlockType = "GLASS";
     }
 
-    // 2. Generate wind speed (-1.5 to 1.5)
+    // Generate wind speed (-1.5 to 1.5)
     p.wind = (Math.random() * 3) - 1.5;
     setActiveWind(p.wind);
   };
@@ -233,8 +235,13 @@ export default function GameScreen({
       const centerX = w / 2;
       const baseY = h - 80;
 
-      // 1. Crane swing calculation
-      p.hookX = centerX + p.swingAmplitude * Math.sin(p.time * p.swingSpeed);
+      // TOPPLE PANIC STATE CHECK: If tower sways wildly past 15-pixel amplitude
+      const isPanic = p.towerSwayAmplitude > 15;
+
+      // Speed up swing by 1.5x during panic
+      const currentSwingSpeed = isPanic ? p.swingSpeed * 1.5 : p.swingSpeed;
+      p.swingPhase += currentSwingSpeed;
+      p.hookX = centerX + p.swingAmplitude * Math.sin(p.swingPhase);
 
       // Dampen sway over time
       p.towerSwayAmplitude *= 0.996;
@@ -262,7 +269,7 @@ export default function GameScreen({
         p.vy += p.gravity;
         p.blockY += p.vy;
 
-        // DRIFT PHYSICS: Apply uniform horizontal wind force every frame as it falls
+        // DRIFT PHYSICS: Apply uniform horizontal wind force
         p.blockX += p.wind;
 
         // Collision check boundaries
@@ -291,17 +298,15 @@ export default function GameScreen({
             p.vy = 0;
 
             const targetRestX = p.blocks.length === 0 ? w / 2 : p.blocks[p.blocks.length - 1].x;
-            
-            // Reconstruct resting restX subtracting the horizontal wind displacement offset
             const restX = targetRestX + dx;
             const restY = baseY - p.blocks.length * p.blockH - p.blockH / 2;
 
             // Generate block color variations based on block type
             let color = "#0e2b0e";
             if (p.currentBlockType === "GOLD") {
-              color = "#ffd700"; // Metallic golden yellow
+              color = "#ffd700"; 
             } else if (p.currentBlockType === "GLASS") {
-              color = "rgba(51, 255, 255, 0.4)"; // Translucent cyan/green glass
+              color = "rgba(51, 255, 255, 0.4)"; 
             } else {
               const blockColors = ["#0e2b0e", "#133b13", "#1c4e1c", "#246424"];
               color = blockColors[p.blocks.length % blockColors.length];
@@ -317,8 +322,7 @@ export default function GameScreen({
               type: p.currentBlockType,
             });
 
-            // Alignment metrics perfect drop windows check
-            // GLASS block has a significantly tighter "Perfect Drop" window (under 2px instead of 4px)
+            // Alignment perfect drop windows check (GLASS has 2.0px perfect tolerance window)
             const perfectThreshold = p.currentBlockType === "GLASS" ? 2.0 : 4.0;
             const offsetDist = Math.abs(dx);
             
@@ -326,12 +330,19 @@ export default function GameScreen({
               p.swayFreezeCount -= 1;
             }
 
-            // Score modifier based on Gold block multiplier (2x score landed cleanly)
             const goldMultiplier = p.currentBlockType === "GOLD" ? 2 : 1;
 
             if (offsetDist <= perfectThreshold) {
               // PERFECT DROP!
               p.swayFreezeCount = 2;
+              p.perfectStreak += 1; // Increment perfect drops in a row streak
+              
+              // STREAK STABILIZATION: If 2 perfect drops landed consecutively, calm sway intensity
+              if (p.perfectStreak >= 2) {
+                p.towerSwayAmplitude = 0; // Completely stabilize the building
+              } else {
+                p.towerSwayAmplitude = Math.max(0, p.towerSwayAmplitude - 6);
+              }
               
               const currentCombo = p.comboCount;
               setScore(prev => {
@@ -351,15 +362,22 @@ export default function GameScreen({
               });
 
               synth.playPerfect(p.comboCount);
-              p.towerSwayAmplitude = 0;
 
               // Star explosion particle colors based on block type
               const particleColor = p.currentBlockType === "GOLD" ? "#ffd700" : p.currentBlockType === "GLASS" ? "#33ffff" : "#33ff33";
 
+              const bannerText = p.perfectStreak >= 2 
+                ? `★ STABILIZED x${currentCombo} ★`
+                : p.currentBlockType === "GOLD" 
+                ? "★ GOLD PERFECT ★" 
+                : p.currentBlockType === "GLASS" 
+                ? "✧ GLASS PERFECT ✧" 
+                : `★ PERFECT x${currentCombo} ★`;
+
               p.floatingTexts.push({
                 x: p.blockX,
                 y: p.blockY - 20,
-                text: `${p.currentBlockType === "GOLD" ? "★ GOLD PERFECT ★" : p.currentBlockType === "GLASS" ? "✧ GLASS PERFECT ✧" : `★ PERFECT x${currentCombo} ★`}`,
+                text: bannerText,
                 alpha: 1.0,
                 color: particleColor,
               });
@@ -376,7 +394,9 @@ export default function GameScreen({
                 });
               }
             } else if (offsetDist <= 13) {
-              // GREAT DROP!
+              // GREAT DROP! (Streak broken)
+              p.perfectStreak = 0;
+              
               synth.playLand();
               setScore(prev => {
                 const nextScore = prev + 250 * goldMultiplier;
@@ -393,7 +413,9 @@ export default function GameScreen({
                 color: p.currentBlockType === "GOLD" ? "#ffd700" : "#33ff33",
               });
             } else {
-              // GOOD Drop
+              // GOOD Drop (Streak broken)
+              p.perfectStreak = 0;
+              
               synth.playLand();
               setScore(prev => {
                 const nextScore = prev + 100 * goldMultiplier;
@@ -422,11 +444,12 @@ export default function GameScreen({
             setBlocksCount(p.blocks.length);
             setHeight(p.blocks.length * 4.2);
 
-            // Spawn next block & change crosswind
             spawnNewBlock();
 
           } else {
-            // MISSED ENTIRELY! Trigger gravity tumble
+            // MISSED ENTIRELY! (Streak broken)
+            p.perfectStreak = 0;
+            
             p.isFalling = false;
             p.isTumbling = true;
             p.tumbleVx = dx * 0.12; 
@@ -467,7 +490,6 @@ export default function GameScreen({
             return;
           }
 
-          // Spawn next block on life loss
           spawnNewBlock();
         }
       } else {
@@ -484,6 +506,17 @@ export default function GameScreen({
 
       c.fillStyle = "#080b09";
       c.fillRect(0, 0, w, h);
+
+      // TOPPLE PANIC STATE CHECK: If tower sways wildly past 15-pixel amplitude
+      const isPanic = p.towerSwayAmplitude > 15;
+
+      // VIEWPORT SCREEN-SHAKE ROUTINE: Shake scene context by translating if in panic state
+      c.save();
+      if (isPanic) {
+        const shakeX = (Math.random() - 0.5) * 4.5;
+        const shakeY = (Math.random() - 0.5) * 4.5;
+        c.translate(shakeX, shakeY);
+      }
 
       // 1. Draw grid backdrop
       c.strokeStyle = "rgba(51, 255, 51, 0.06)";
@@ -532,7 +565,6 @@ export default function GameScreen({
 
         c.fillStyle = block.color;
         
-        // Custom retro border colors based on block type
         if (block.type === "GOLD") {
           c.strokeStyle = "#ffd700";
         } else if (block.type === "GLASS") {
@@ -547,9 +579,8 @@ export default function GameScreen({
         c.fill();
         c.stroke();
 
-        // Glowing Windows
+        // Windows drawing
         if (block.type === "GOLD") {
-          // Flashing glowing golden windows
           c.fillStyle = p.time % 20 < 10 ? "#ffffff" : "#ffd700";
         } else if (block.type === "GLASS") {
           c.fillStyle = "rgba(51, 255, 255, 0.7)";
@@ -563,7 +594,6 @@ export default function GameScreen({
         c.fillRect(-13, -9, 2, 18);
         c.fillRect(11, -9, 2, 18);
 
-        // Block digital details
         c.fillStyle = block.type === "GOLD" ? "#ffd700" : block.type === "GLASS" ? "#33ffff" : "#33ff33";
         c.font = 'bold 7px "Geist Mono", monospace';
         c.textAlign = "center";
@@ -603,7 +633,6 @@ export default function GameScreen({
         c.fill();
         c.stroke();
 
-        // Windows drawing
         c.fillStyle = borderFlashColor;
         c.fillRect(-16, -9, 8, 18);
         c.fillRect(8, -9, 8, 18);
@@ -655,7 +684,7 @@ export default function GameScreen({
         c.restore();
       });
 
-      // 7. Draw Crane Anchor and cables (drawn at top static boundary)
+      // 7. Draw Crane Anchor and cables (drawn inside the shaking context to make crane sway as well!)
       c.strokeStyle = "#1e3a24";
       c.lineWidth = 6;
       c.beginPath();
@@ -692,12 +721,23 @@ export default function GameScreen({
         c.stroke();
       }
 
-      // 8. Render sway warning
-      if (p.towerSwayAmplitude > 25 && p.swayFreezeCount === 0) {
+      // Restore screen-shake context translation matrix
+      c.restore();
+
+      // 8. Render sway and panic warning at absolute top position (so text is readable!)
+      if (isPanic) {
+        c.fillStyle = "#ff3333";
+        c.font = 'bold 10px "Geist Mono", monospace';
+        c.textAlign = "center";
+        c.fillText("⚠️ TOUGHER CONDITIONS: TOUPLE PANIC ACTIVE! ⚠️", w / 2, 90);
+        c.font = '8px "Geist Mono", monospace';
+        c.fillStyle = "#ff3333/75";
+        c.fillText("LAND 2 PERFECTS IN A ROW TO STABILIZE BUILDING!", w / 2, 102);
+      } else if (p.towerSwayAmplitude > 25 && p.swayFreezeCount === 0) {
         c.fillStyle = "rgba(255, 51, 51, 0.45)";
         c.font = 'bold 9px "Geist Mono", monospace';
         c.textAlign = "center";
-        c.fillText("⚠️ DANGER: TOWER SWAYING ⚠️", w / 2, 90);
+        c.fillText("⚠️ WARNING: TOWER SWAYING ⚠️", w / 2, 90);
       }
 
       // 9. DRAW SWAY LOCK COMBO INDICATOR
@@ -709,24 +749,24 @@ export default function GameScreen({
         c.font = 'bold 8px "Geist Mono", monospace';
         
         c.beginPath();
-        c.rect(w - 95, 85, 85, 20);
+        c.rect(w - 95, 115, 85, 20);
         c.fillStyle = "#041404";
         c.fill();
         c.stroke();
         
         c.fillStyle = "#33ff33";
-        c.fillText(`🔒 SWAY LOCK: ${p.swayFreezeCount}`, w - 52, 98);
+        c.fillText(`🔒 SWAY LOCK: ${p.swayFreezeCount}`, w - 52, 128);
         c.restore();
       }
 
-      // 10. DRAW CROSSWIND RETRO GAUGE INDICATOR (vector layout arrow)
+      // 10. DRAW CROSSWIND RETRO GAUGE INDICATOR
       c.save();
       c.strokeStyle = "#33ff33";
       c.lineWidth = 1.5;
       c.font = 'bold 8px "Geist Mono", monospace';
       
       c.beginPath();
-      c.rect(10, 85, 105, 20);
+      c.rect(10, 115, 105, 20);
       c.fillStyle = "#041404";
       c.fill();
       c.stroke();
@@ -738,7 +778,7 @@ export default function GameScreen({
         ? "WIND: CALM" 
         : `WIND: ${p.wind > 0 ? ">>>" : "<<<"} ${Math.abs(p.wind * 10).toFixed(0)} KT`;
       
-      c.fillText(windLabel, 16, 98);
+      c.fillText(windLabel, 16, 128);
       c.restore();
     };
 
@@ -786,6 +826,7 @@ export default function GameScreen({
     p.cameraY = 0;
     p.targetCameraY = 0;
     p.swayFreezeCount = 0;
+    p.perfectStreak = 0;
     p.particles = [];
     p.floatingTexts = [];
     
