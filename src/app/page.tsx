@@ -2,9 +2,17 @@
 
 import React, { useState, useEffect } from "react";
 import GameScreen from "@/components/GameScreen";
-import { Play, Volume2, VolumeX, Shield, Award, RotateCcw, Home, Building2 } from "lucide-react";
+import { Play, Volume2, VolumeX, Shield, Award, RotateCcw, Home, Building2, Flame, Activity } from "lucide-react";
 
-type GameState = "START" | "PLAYING" | "GAMEOVER";
+export type GameState = "START" | "DIFFICULTY" | "PLAYING" | "GAMEOVER";
+
+export interface DifficultyConfig {
+  name: "EASY" | "MID" | "CHALLENGING";
+  gravitySpeed: number;
+  maxWind: number;
+  panicThreshold: number;
+  powerUpSpawnInterval: number;
+}
 
 export default function Page() {
   const [gameState, setGameState] = useState<GameState>("START");
@@ -12,6 +20,15 @@ export default function Page() {
   const [isMuted, setIsMuted] = useState(false);
   const [personalBest, setPersonalBest] = useState(0);
   
+  // Dynamic difficulty configuration state
+  const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyConfig>({
+    name: "MID",
+    gravitySpeed: 6,
+    maxWind: 0.5,
+    panicThreshold: 20,
+    powerUpSpawnInterval: 6,
+  });
+
   // Game stats for Game Over modal
   const [stats, setStats] = useState({
     score: 0,
@@ -37,14 +54,45 @@ export default function Page() {
       { rank: 3, name: "YOU (BEST)", score: personalBest, height: (personalBest / 100) * 1.5 },
       { rank: 4, name: "BRIGHT_ICT", score: 14200, height: 96.6 },
     ];
-    // Sort descending by score
     return list.sort((a, b) => b.score - a.score).map((item, idx) => ({
       ...item,
       rank: idx + 1,
     }));
   };
 
-  const handleStartGame = () => {
+  const handleInsertCoin = () => {
+    setGameState("DIFFICULTY");
+  };
+
+  const handleSelectDifficulty = (diff: "EASY" | "MID" | "CHALLENGING") => {
+    let config: DifficultyConfig;
+    if (diff === "EASY") {
+      config = {
+        name: "EASY",
+        gravitySpeed: 4,
+        maxWind: 0,
+        panicThreshold: 999,
+        powerUpSpawnInterval: 4,
+      };
+    } else if (diff === "CHALLENGING") {
+      config = {
+        name: "CHALLENGING",
+        gravitySpeed: 9,
+        maxWind: 1.5,
+        panicThreshold: 12,
+        powerUpSpawnInterval: 10,
+      };
+    } else {
+      config = {
+        name: "MID",
+        gravitySpeed: 6,
+        maxWind: 0.5,
+        panicThreshold: 20,
+        powerUpSpawnInterval: 6,
+      };
+    }
+    
+    setSelectedDifficulty(config);
     setGameState("PLAYING");
     setIsPaused(false);
   };
@@ -116,7 +164,7 @@ export default function Page() {
           {/* Start button */}
           <div className="w-full">
             <button
-              onClick={handleStartGame}
+              onClick={handleInsertCoin}
               className="retro-btn text-base py-3 w-full flex items-center justify-center gap-2 tracking-widest uppercase font-black"
             >
               <Play className="w-4 h-4 fill-current" />
@@ -166,18 +214,89 @@ export default function Page() {
         </div>
       )}
 
-      {/* 2. ACTIVE GAMEPLAY SCREEN */}
+      {/* 2. DIFFICULTY SELECTION SCREEN */}
+      {gameState === "DIFFICULTY" && (
+        <div className="flex flex-col items-center justify-center gap-5 w-full max-w-lg px-6 font-mono z-10 text-center animate-fade-in">
+          
+          <div className="retro-border bg-[#080b09] p-5 w-full flex flex-col items-center gap-3.5 rounded-3xl glow-box-green">
+            <div className="flex items-center justify-center gap-1.5">
+              <Activity className="w-5 h-5 text-retro-green animate-pulse" />
+              <h2 className="text-xl font-black text-retro-green tracking-widest uppercase glow-green">
+                SELECT DIFFICULTY
+              </h2>
+            </div>
+            <p className="text-[9px] text-retro-green/75 uppercase tracking-wide leading-relaxed max-w-xs">
+              Configure arcade hardware parameters. Choose your physics complexity before insertion.
+            </p>
+          </div>
+
+          {/* Difficulty options */}
+          <div className="w-full flex flex-col gap-3.5">
+            {/* EASY */}
+            <button
+              onClick={() => handleSelectDifficulty("EASY")}
+              className="retro-btn border-green-500 text-green-400 bg-green-950/20 hover:bg-green-500 hover:text-[#080b09] flex flex-col items-start gap-1 p-3.5 rounded-2xl w-full text-left"
+            >
+              <div className="flex justify-between items-center w-full">
+                <span className="text-sm font-black tracking-widest">1. EASY MODE</span>
+                <span className="text-[9px] border border-green-500 px-1.5 py-0.5 rounded font-bold">STABLE</span>
+              </div>
+              <p className="text-[9px] uppercase leading-relaxed text-green-400/80">
+                Calm skies (0 KT winds), frequent power-ups (4 blocks), zero structure panics. Ideal for apprentice builders.
+              </p>
+            </button>
+
+            {/* MID */}
+            <button
+              onClick={() => handleSelectDifficulty("MID")}
+              className="retro-btn border-yellow-500 text-yellow-400 bg-yellow-950/20 hover:bg-yellow-500 hover:text-[#080b09] flex flex-col items-start gap-1 p-3.5 rounded-2xl w-full text-left"
+            >
+              <div className="flex justify-between items-center w-full">
+                <span className="text-sm font-black tracking-widest">2. REGULAR ARCADE</span>
+                <span className="text-[9px] border border-yellow-500 px-1.5 py-0.5 rounded font-bold">BALANCED</span>
+              </div>
+              <p className="text-[9px] uppercase leading-relaxed text-yellow-400/80">
+                Light crosswinds (5 KT), normal helpers (6 blocks), moderate structure swaying. The classic Nokia feel.
+              </p>
+            </button>
+
+            {/* CHALLENGING */}
+            <button
+              onClick={() => handleSelectDifficulty("CHALLENGING")}
+              className="retro-btn border-red-500 text-red-400 bg-red-950/20 hover:bg-red-500 hover:text-[#080b09] flex flex-col items-start gap-1 p-3.5 rounded-2xl w-full text-left"
+            >
+              <div className="flex justify-between items-center w-full">
+                <span className="text-sm font-black tracking-widest">3. CHAOS CRISIS</span>
+                <span className="text-[9px] border border-red-500 px-1.5 py-0.5 rounded font-bold uppercase animate-pulse">Dangerous</span>
+              </div>
+              <p className="text-[9px] uppercase leading-relaxed text-red-400/80 font-bold">
+                Severe crosswinds (15 KT), rare power-ups (10 blocks), hyper-sensitive structural sway panics.
+              </p>
+            </button>
+          </div>
+
+          <button
+            onClick={handleBackToTitle}
+            className="text-[10px] border border-retro-green/40 hover:border-retro-green text-retro-green bg-transparent hover:bg-retro-green/10 py-2 px-6 rounded-xl transition-all font-bold cursor-pointer uppercase"
+          >
+            ← BACK TO TITLE
+          </button>
+        </div>
+      )}
+
+      {/* 3. ACTIVE GAMEPLAY SCREEN */}
       {gameState === "PLAYING" && (
         <div className="w-full h-full relative">
           <GameScreen
             onGameOver={handleGameOver}
             isPaused={isPaused}
             onTogglePause={togglePause}
+            difficulty={selectedDifficulty}
           />
         </div>
       )}
 
-      {/* 3. GAME OVER MODAL SCREEN */}
+      {/* 4. GAME OVER MODAL SCREEN */}
       {gameState === "GAMEOVER" && (
         <div className="absolute inset-0 bg-[#080b09]/90 backdrop-blur-md z-50 flex items-center justify-center font-mono">
           <div className="retro-border bg-[#080b09] p-8 max-w-sm w-[90%] flex flex-col gap-5 rounded-3xl glow-box-green text-center">
@@ -193,6 +312,10 @@ export default function Page() {
 
             {/* Score Grid & Performance Stats */}
             <div className="border-2 border-retro-green/45 bg-retro-dark/30 rounded-2xl p-4 flex flex-col gap-3">
+              <div className="flex justify-between items-center text-xs font-bold border-b border-retro-green/20 pb-2">
+                <span className="text-retro-green/70 uppercase font-bold">MODE ({selectedDifficulty.name})</span>
+                <span className="text-xs text-retro-green font-mono">{selectedDifficulty.name}</span>
+              </div>
               <div className="flex justify-between items-center text-xs font-bold border-b border-retro-green/20 pb-2">
                 <span className="text-retro-green/70 uppercase">SCORE</span>
                 <span className="text-lg text-retro-green glow-green">{stats.score.toLocaleString()}</span>

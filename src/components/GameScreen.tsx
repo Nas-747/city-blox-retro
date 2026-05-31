@@ -3,12 +3,14 @@
 import React, { useRef, useEffect, useState } from "react";
 import RetroHUD from "./RetroHUD";
 import { synth } from "@/utils/audio";
+import { DifficultyConfig } from "@/app/page";
 import { Play, Pause, RotateCcw, Volume2, VolumeX } from "lucide-react";
 
 interface GameScreenProps {
   onGameOver: (finalScore: number, finalHeight: number, finalBlocks: number) => void;
   isPaused: boolean;
   onTogglePause: () => void;
+  difficulty: DifficultyConfig;
 }
 
 type BlockType = "NORMAL" | "GOLD" | "GLASS";
@@ -18,6 +20,7 @@ export default function GameScreen({
   onGameOver,
   isPaused,
   onTogglePause,
+  difficulty,
 }: GameScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -51,7 +54,7 @@ export default function GameScreen({
     tumbleVx: 0,
     tumbleRotation: 0,
     vy: 0,
-    gravity: 0.5,
+    gravity: 0.48,           // Dynamically configured by difficulty settings
     swingSpeed: 0.038,
     swingAmplitude: 115,
     swingPhase: 0,          
@@ -76,7 +79,7 @@ export default function GameScreen({
     perfectStreak: 0,       
 
     // Crosswinds & Block Types parameters
-    wind: 0,                // Floating number from -1.5 to 1.5
+    wind: 0,                // Floating number from -maxWind to maxWind
     currentBlockType: "NORMAL" as BlockType,
 
     // Floating Power-ups parameters
@@ -125,6 +128,11 @@ export default function GameScreen({
     physicsRef.current.comboCount = combo;
   }, [lives, score, height, blocksCount, combo]);
 
+  // Trigger physics reset immediately whenever the active difficulty configuration changes
+  useEffect(() => {
+    handleReset();
+  }, [difficulty]);
+
   // Synchronize mute setting with sound synthesizer instance
   const handleToggleMute = () => {
     const nextMute = !muted;
@@ -155,7 +163,7 @@ export default function GameScreen({
     };
   }, [isPaused, onTogglePause, muted]);
 
-  // Generate a random block variant and crosswind environment
+  // Generate a random block variant and crosswind environment derived from DifficultyConfig
   const spawnNewBlock = () => {
     const p = physicsRef.current;
     
@@ -169,7 +177,13 @@ export default function GameScreen({
       p.currentBlockType = "GLASS";
     }
 
-    p.wind = (Math.random() * 3) - 1.5;
+    // Dynamic wind generation derived from maxWind configuration
+    if (difficulty.maxWind > 0) {
+      p.wind = (Math.random() * 2 * difficulty.maxWind) - difficulty.maxWind;
+    } else {
+      p.wind = 0; // Wind disabled entirely in EASY mode
+    }
+    
     setActiveWind(p.wind);
   };
 
@@ -181,7 +195,6 @@ export default function GameScreen({
     const startLeft = Math.random() < 0.5;
     const x = startLeft ? -20 : 420;
     
-    // Spawns near middle vertical height, adjusted above current stack top
     const y = Math.max(220, p.canvasH - (p.blocks.length * p.blockH) - 140);
     const vx = startLeft ? 1.5 : -1.5;
 
@@ -219,11 +232,6 @@ export default function GameScreen({
       }
     }
   };
-
-  // Initial block spawn on startup
-  useEffect(() => {
-    spawnNewBlock();
-  }, []);
 
   // Game Loop Animation & Resizing Edge Case Management
   useEffect(() => {
@@ -272,8 +280,8 @@ export default function GameScreen({
       const centerX = w / 2;
       const baseY = h - 80;
 
-      // 1. TOPPLE PANIC STATE CHECK
-      const isPanic = p.towerSwayAmplitude > 15;
+      // 1. TOPPLE PANIC STATE CHECK (derived from dynamic config panicThreshold)
+      const isPanic = p.towerSwayAmplitude > difficulty.panicThreshold;
 
       // CONTINUOUS PANIC RUMBLE OSCILLATION TRIGGER
       if (isPanic) {
@@ -577,8 +585,8 @@ export default function GameScreen({
             setBlocksCount(p.blocks.length);
             setHeight(p.blocks.length * 4.2);
 
-            // POWER-UP TRIGGER EVENT
-            if (p.blocks.length > 0 && p.blocks.length % 5 === 0) {
+            // POWER-UP TRIGGER EVENT: Spawn interval derived from difficulty powerUpSpawnInterval config
+            if (p.blocks.length > 0 && p.blocks.length % difficulty.powerUpSpawnInterval === 0) {
               triggerPowerUpSpawn();
             }
 
@@ -644,7 +652,8 @@ export default function GameScreen({
       c.fillStyle = "#080b09";
       c.fillRect(0, 0, w, h);
 
-      const isPanic = p.towerSwayAmplitude > 15;
+      // VIEWPORT SCREEN-SHAKE ROUTINE
+      const isPanic = p.towerSwayAmplitude > difficulty.panicThreshold;
 
       c.save();
       if (isPanic) {
@@ -917,11 +926,9 @@ export default function GameScreen({
     return () => {
       window.removeEventListener("resize", resizeVirtualScreen);
       cancelAnimationFrame(animId);
-      
-      // SAFE GRACEFUL AUDIO UNMOUNT CLEANUP: Stop alarm sound loop on unmount immediately!
       synth.stopRumble();
     };
-  }, [isPaused, laserCharges, swayLockCharges, isPanicState]);
+  }, [isPaused, laserCharges, swayLockCharges, isPanicState, difficulty]);
 
   // Release the active block
   const triggerBlockRelease = () => {
@@ -942,8 +949,10 @@ export default function GameScreen({
     setHeight(0);
     setBlocksCount(0);
     setMaxCombo(1);
+    setLaserCharges(0);
+    setSwayLockCharges(0);
+    setIsPanicState(false);
 
-    // Stop panic sound loops immediately on restart!
     synth.stopRumble();
 
     const p = physicsRef.current;
@@ -967,6 +976,9 @@ export default function GameScreen({
     p.laserGuideCount = 0;
     p.particles = [];
     p.floatingTexts = [];
+    
+    // Dynamic physics gravity coefficient assignment
+    p.gravity = difficulty.gravitySpeed * 0.08;
     
     spawnNewBlock();
   };
